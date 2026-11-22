@@ -33,6 +33,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# The broad Python packaging rule above must not hide frontend source modules.
+!frontend/src/lib/
+!frontend/src/lib/**
 lib64/
 parts/
 sdist/
