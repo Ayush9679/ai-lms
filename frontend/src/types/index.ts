@@ -72,7 +72,9 @@ export interface Lesson {
   course_id: string;
   title: string;
   content: string | null;
+  thumbnail: string | null;
   video_url: string | null;
+  video_status: "pending" | "uploading" | "ready" | "failed";
   pdf_url: string | null;
   transcript: string | null;
   duration_minutes: number | null;
@@ -80,6 +82,17 @@ export interface Lesson {
   is_published: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface LessonSummary {
+  id: string;
+  title: string;
+  duration_minutes: number | null;
+  order_index: number;
+  is_published: boolean;
+  video_status: "pending" | "uploading" | "ready" | "failed";
+  has_video: boolean;
+  has_pdf: boolean;
 }
 
 export interface LessonProgress {

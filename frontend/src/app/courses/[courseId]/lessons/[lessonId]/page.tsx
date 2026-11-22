@@ -282,7 +282,7 @@ export default function LessonPlayerPage() {
           {/* Media Player Layer */}
           <div className="w-full aspect-video rounded-3xl bg-zinc-950 border border-zinc-900 overflow-hidden relative flex items-center justify-center">
             {lesson.video_url ? (
-              <video src={lesson.video_url} controls className="w-full h-full object-contain" />
+              <video src={lesson.video_url} poster={lesson.thumbnail ?? undefined} controls className="w-full h-full object-contain" />
             ) : lesson.pdf_url ? (
               <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-center p-8 bg-zinc-950">
                 <File className="w-16 h-16 text-purple-400" />

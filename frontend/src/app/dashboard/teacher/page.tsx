@@ -119,7 +119,7 @@ export default function TeacherDashboard() {
                   <p className="text-xs text-zinc-400">Active Quizzes Generated</p>
                 </div>
 
-                {/* Stats 4 (Revenue Placeholder) */}
+                {/* Recent student activity from the teacher dashboard API */}
                 <div className="glass-card rounded-3xl p-6 flex flex-col gap-3 relative overflow-hidden">
                   <div className="flex items-center justify-between">
                     <div className="p-3 rounded-2xl bg-green-950/40 border border-green-500/10 flex items-center justify-center">
@@ -127,8 +127,10 @@ export default function TeacherDashboard() {
                     </div>
                     <span className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Earnings</span>
                   </div>
-                  <h3 className="text-2xl font-black text-white">$1,450</h3>
-                  <p className="text-xs text-zinc-400">Estimated teacher payout</p>
+                  <h3 className="text-2xl font-black text-white">
+                    {dashboardData?.student_stats.active_students_this_month || 0}
+                  </h3>
+                  <p className="text-xs text-zinc-400">Students active this month</p>
                 </div>
               </div>
 

@@ -6,6 +6,7 @@ import {
   CourseSummary,
   CourseFile,
   Lesson,
+  LessonSummary,
   LessonProgress,
   Enrollment,
   Quiz,
@@ -21,6 +22,62 @@ import {
   TeacherDashboardData,
   AdminDashboardData,
 } from "@/types";
+
+interface PresignedUploadGrant {
+  upload_url: string;
+  upload_token: string;
+  expires_in: number;
+}
+
+type UploadProgress = (percent: number) => void;
+
+async function directObjectUpload(
+  resourceType: "course" | "lesson",
+  resourceId: string,
+  assetType: "thumbnail" | "video" | "pdf" | "file",
+  file: File,
+  signal?: AbortSignal,
+  onProgress?: UploadProgress,
+  originalName?: string,
+): Promise<void> {
+  const { data: grant } = await apiClient.post<PresignedUploadGrant>("/uploads/presign", {
+    resource_type: resourceType,
+    resource_id: resourceId,
+    asset_type: assetType,
+    mime_type: file.type,
+    size_bytes: file.size,
+    ...(originalName ? { original_name: originalName } : {}),
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Upload cancelled", "AbortError"));
+        return;
+      }
+      const request = new XMLHttpRequest();
+      request.open("PUT", grant.upload_url);
+      request.setRequestHeader("Content-Type", file.type);
+      request.setRequestHeader("If-None-Match", "*");
+      request.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+      };
+      request.onload = () => request.status >= 200 && request.status < 300
+        ? resolve()
+        : reject(new Error(`Storage upload failed (${request.status}). Retry the upload.`));
+      request.onerror = () => reject(new Error("Storage upload failed. Check your connection and retry."));
+      request.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+      signal?.addEventListener("abort", () => request.abort(), { once: true });
+      if (signal?.aborted) request.abort();
+      else request.send(file);
+    });
+    if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
+    await apiClient.post("/uploads/complete", { upload_token: grant.upload_token });
+  } catch (error) {
+    await apiClient.post("/uploads/cancel", { upload_token: grant.upload_token }).catch(() => undefined);
+    throw error;
+  }
+}
 
 // =============================================================================
 // AUTHENTICATION SERVICES
@@ -106,22 +163,17 @@ export const courseService = {
     return res.data;
   },
 
-  async uploadThumbnail(id: string, file: File): Promise<Course> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/courses/${id}/thumbnail`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadThumbnail(id: string, file: File, signal?: AbortSignal): Promise<Course> {
+    await directObjectUpload("course", id, "thumbnail", file, signal);
+    return this.getDetails(id);
   },
 
   async uploadFile(id: string, file: File, fileType: string): Promise<CourseFile> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/courses/${id}/files?file_type=${fileType}`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+    await directObjectUpload("course", id, "file", file, undefined, undefined, file.name);
+    const files = await this.listFiles(id);
+    const uploaded = [...files].reverse().find((item) => item.original_name === file.name && item.size_bytes === file.size);
+    if (!uploaded) throw new Error(`Upload completed, but the ${fileType} file record could not be loaded.`);
+    return uploaded;
   },
 
   async listFiles(id: string): Promise<CourseFile[]> {
@@ -139,7 +191,7 @@ export const courseService = {
 // LESSON SERVICES
 // =============================================================================
 export const lessonService = {
-  async listByCourse(courseId: string): Promise<Lesson[]> {
+  async listByCourse(courseId: string): Promise<LessonSummary[]> {
     const res = await apiClient.get(`/courses/${courseId}/lessons`);
     return res.data;
   },
@@ -164,22 +216,19 @@ export const lessonService = {
     return res.data;
   },
 
-  async uploadVideo(id: string, file: File): Promise<Lesson> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/lessons/${id}/video`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadVideo(id: string, file: File, signal?: AbortSignal, onProgress?: UploadProgress): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "video", file, signal, onProgress);
+    return this.getDetails(id);
   },
 
-  async uploadPdf(id: string, file: File): Promise<Lesson> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/lessons/${id}/pdf`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadPdf(id: string, file: File, signal?: AbortSignal): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "pdf", file, signal);
+    return this.getDetails(id);
+  },
+
+  async uploadThumbnail(id: string, file: File, signal?: AbortSignal): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "thumbnail", file, signal);
+    return this.getDetails(id);
   },
 
   async updateProgress(id: string, data: { is_completed: boolean; watch_time_seconds: number; completion_percentage: number }): Promise<LessonProgress> {

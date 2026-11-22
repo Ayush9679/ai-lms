@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { lessonService } from "@/services/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { PageTransition } from "@/components/shared/PageTransitions";
 import { ArrowLeft, Upload, File, Film, Loader2 } from "lucide-react";
@@ -11,24 +12,38 @@ import toast from "react-hot-toast";
 
 export default function LessonAssetUploadPage() {
   const { courseId, lessonId } = useParams();
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const videoAbort = useRef<AbortController | null>(null);
 
   const handleVideoUpload = async () => {
     if (!videoFile) return;
+    if (videoFile.size > 2048 * 1024 * 1024) {
+      toast.error("Video exceeds the configured 2048 MB limit.");
+      return;
+    }
     setIsUploadingVideo(true);
+    setVideoProgress(0);
+    videoAbort.current = new AbortController();
     try {
-      await lessonService.uploadVideo(lessonId as string, videoFile);
+      await lessonService.uploadVideo(lessonId as string, videoFile, videoAbort.current.signal, setVideoProgress);
+      await queryClient.invalidateQueries({ queryKey: ["courseLessons", courseId] });
       toast.success("Lesson video uploaded successfully!");
       setVideoFile(null);
-    } catch (err: any) {
-      console.error(err);
-      toast.error("Failed to upload lesson video.");
+    } catch (err: unknown) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        console.error(err);
+        toast.error(err instanceof Error ? err.message : "Failed to upload lesson video.");
+      } else {
+        toast("Video upload cancelled.");
+      }
     } finally {
       setIsUploadingVideo(false);
+      videoAbort.current = null;
     }
   };
 
@@ -39,9 +54,9 @@ export default function LessonAssetUploadPage() {
       await lessonService.uploadPdf(lessonId as string, pdfFile);
       toast.success("Lesson PDF worksheet uploaded successfully!");
       setPdfFile(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      toast.error("Failed to upload lesson PDF.");
+      toast.error(err instanceof Error ? err.message : "Failed to upload lesson PDF.");
     } finally {
       setIsUploadingPdf(false);
     }
@@ -73,7 +88,7 @@ export default function LessonAssetUploadPage() {
                 <Film className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-white">Lecture Video</h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">Upload video lessons (MP4 only). Supported size up to 100MB.</p>
+              <p className="text-xs text-zinc-500 leading-relaxed">Upload an MP4 lecture video up to 2048 MB. Large uploads use one direct upload and may need to be restarted if interrupted.</p>
               
               <input
                 type="file"
@@ -101,6 +116,15 @@ export default function LessonAssetUploadPage() {
                   {isUploadingVideo && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Upload Video
                 </button>
+              )}
+              {isUploadingVideo && (
+                <div className="flex flex-col gap-2" aria-live="polite">
+                  <progress className="w-full accent-purple-500" value={videoProgress} max={100} aria-label="Video upload progress" />
+                  <div className="flex items-center justify-between text-xs text-zinc-400">
+                    <span>{videoProgress < 100 ? `${videoProgress}% uploaded` : "Verifying uploaded video…"}</span>
+                    {videoProgress < 100 && <button type="button" onClick={() => videoAbort.current?.abort()} className="underline underline-offset-2">Cancel upload</button>}
+                  </div>
+                </div>
               )}
             </div>
 

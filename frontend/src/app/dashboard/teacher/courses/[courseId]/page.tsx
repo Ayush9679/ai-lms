@@ -29,6 +29,7 @@ export default function CourseDetailsManager() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"lessons" | "quizzes" | "assignments">("lessons");
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   // Fetch Course details
   const { data: course, isLoading: courseLoading } = useQuery({
@@ -68,12 +69,19 @@ export default function CourseDetailsManager() {
 
   const publishCourseMutation = useMutation({
     mutationFn: (status: "published" | "draft") => courseService.update(courseId as string, { status }),
+    onMutate: () => setPublishError(null),
     onSuccess: (_, newStatus) => {
       queryClient.invalidateQueries({ queryKey: ["teacherCourse", courseId] });
       queryClient.invalidateQueries({ queryKey: ["teacherCourses"] });
       queryClient.invalidateQueries({ queryKey: ["teacherDashboard"] });
       queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
       toast.success(newStatus === "published" ? "Course published! Students can now see it." : "Course reverted to draft.");
+    },
+    onError: (error: unknown) => {
+      const responseError = error as { response?: { data?: { message?: string; detail?: string } } };
+      const message = responseError.response?.data?.message ?? responseError.response?.data?.detail ?? "Could not publish course. Check the requirements and try again.";
+      setPublishError(message);
+      toast.error(message);
     },
   });
 
@@ -93,10 +101,15 @@ export default function CourseDetailsManager() {
       toast.error("Please upload an image file.");
       return;
     }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("Thumbnail must be 10 MB or smaller.");
+      return;
+    }
 
     setUploadingThumbnail(true);
     try {
-      await courseService.uploadThumbnail(courseId as string, file);
+      const updatedCourse = await courseService.uploadThumbnail(courseId as string, file);
+      queryClient.setQueryData(["teacherCourse", courseId], updatedCourse);
       queryClient.invalidateQueries({ queryKey: ["teacherCourse", courseId] });
       queryClient.invalidateQueries({ queryKey: ["teacherCourses"] });
       queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
@@ -167,6 +180,13 @@ export default function CourseDetailsManager() {
 
   if (!course) return null;
 
+  const publishRequirements = [
+    { label: "Course title is set", complete: Boolean(course.title.trim()) },
+    { label: "Course cover thumbnail is uploaded", complete: Boolean(course.thumbnail) },
+    { label: "At least one lesson video is ready", complete: Boolean(lessons?.some((lesson) => lesson.video_status === "ready")) },
+  ];
+  const canPublish = publishRequirements.every((requirement) => requirement.complete);
+
   return (
     <DashboardLayout>
       <PageTransition>
@@ -200,8 +220,10 @@ export default function CourseDetailsManager() {
               {course.status === "draft" ? (
                 <button
                   onClick={() => publishCourseMutation.mutate("published")}
-                  disabled={publishCourseMutation.isPending}
-                  className="px-5 py-3 text-sm font-semibold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-xl shadow-md transition cursor-pointer"
+                  disabled={publishCourseMutation.isPending || !canPublish}
+                  aria-describedby="publish-requirements"
+                  title={canPublish ? "Publish this course" : "Complete the listed requirements to publish"}
+                  className="px-5 py-3 text-sm font-semibold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-xl shadow-md transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Publish Course
                 </button>
@@ -217,6 +239,20 @@ export default function CourseDetailsManager() {
             </div>
           </div>
 
+          {course.status === "draft" && (
+            <div id="publish-requirements" aria-live="polite" className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4 text-xs text-zinc-400" title="Course publishing requirements">
+              <p className="mb-2 font-semibold text-zinc-300">Before publishing, complete all requirements:</p>
+              <ul className="flex flex-col gap-1">
+                {publishRequirements.map((requirement) => (
+                  <li key={requirement.label} aria-label={`${requirement.complete ? "Complete" : "Incomplete"}: ${requirement.label}`}>
+                    <span aria-hidden="true" className={requirement.complete ? "text-emerald-400" : "text-amber-400"}>{requirement.complete ? "✓" : "•"}</span>{" "}{requirement.label}
+                  </li>
+                ))}
+              </ul>
+              {publishError && <p role="alert" className="mt-2 text-red-400">{publishError}</p>}
+            </div>
+          )}
+
           {/* Cover Thumbnail Management */}
           <div className="glass-card rounded-3xl p-5 flex flex-col sm:flex-row items-center gap-5 border border-zinc-850 bg-zinc-950/20">
             <div className="w-40 aspect-video bg-zinc-950 rounded-2xl border border-zinc-900 overflow-hidden relative shrink-0">
@@ -230,7 +266,7 @@ export default function CourseDetailsManager() {
             </div>
             <div className="flex-grow flex flex-col gap-2 text-center sm:text-left">
               <h3 className="text-sm font-bold text-white">Course Cover Image</h3>
-              <p className="text-zinc-555 text-xs">PNG, JPEG, WEBP or GIF. Max 50MB. Resized automatically.</p>
+              <p className="text-zinc-555 text-xs">PNG, JPEG, WEBP or GIF. Max 10 MB.</p>
               <div className="flex flex-wrap items-center gap-2 mt-1 justify-center sm:justify-start">
                 <label className="py-2 px-4 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs font-bold rounded-xl text-zinc-300 hover:text-white transition cursor-pointer select-none">
                   {uploadingThumbnail ? "Uploading..." : course.thumbnail ? "Replace Image" : "Upload Image"}
