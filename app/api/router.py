@@ -15,6 +15,7 @@ from app.api.v1 import (
     quizzes,
     search,
     users,
+    uploads,
 )
 
 api_router = APIRouter()
@@ -30,6 +31,9 @@ api_router.include_router(courses.router, prefix="/courses", tags=["📚 Courses
 
 # Lessons (nested under /courses/{id}/lessons and /lessons)
 api_router.include_router(lessons.router, prefix="", tags=["📖 Lessons"])
+
+# Presigned private object uploads
+api_router.include_router(uploads.router, prefix="/uploads", tags=["Uploads"])
 
 # Enrollments
 api_router.include_router(enrollments.router, prefix="/enrollments", tags=["🎓 Enrollments"])

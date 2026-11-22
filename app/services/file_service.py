@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.exceptions import FileTooLargeError, InvalidFileTypeError
 from app.core.logging import get_logger
 from app.models.course import FileType
+from app.services.storage_service import get_object_storage, is_r2_key
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -78,18 +79,31 @@ class FileService:
             raise InvalidFileTypeError(mime_type)
 
         file_type = MIME_TO_FILE_TYPE.get(mime_type, FileType.other)
-        subdir = self._get_subdir(file_type)
+        upload_limit = settings.MAX_UPLOAD_SIZE_BYTES
+        if file_type == FileType.image:
+            upload_limit = min(upload_limit, settings.MAX_IMAGE_SIZE_BYTES)
+        if size > upload_limit:
+            raise FileTooLargeError(upload_limit // (1024 * 1024))
         file_name = self._generate_filename(mime_type)
-        file_path = subdir / file_name
-
-        async with aiofiles.open(file_path, "wb") as f:
-            await f.write(content)
-
-        relative_path = f"/{file_type.value}/{file_name}"
-        logger.info(
-            "File saved",
-            extra={"path": str(file_path), "size": size, "mime": mime_type},
+        r2_configured = any(
+            (
+                settings.STORAGE_ENDPOINT_URL,
+                settings.STORAGE_ACCOUNT_ID,
+                settings.STORAGE_ACCESS_KEY_ID,
+                settings.STORAGE_SECRET_ACCESS_KEY,
+            )
         )
+        if r2_configured:
+            relative_path = await get_object_storage().put(
+                content, mime_type, file_type.value, Path(file_name).suffix
+            )
+        else:
+            subdir = self._get_subdir(file_type)
+            file_path = subdir / file_name
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(content)
+            relative_path = f"/{file_type.value}/{file_name}"
+        logger.info("File saved", extra={"path": relative_path, "size": size, "mime": mime_type})
         return file_name, relative_path, size, file_type, mime_type
 
     async def save_image(self, upload: UploadFile) -> tuple[str, str, int, FileType, str]:
@@ -119,3 +133,14 @@ class FileService:
     def get_full_path(self, relative_path: str) -> str:
         """Convert a relative path to the full URL path for serving."""
         return f"/static{relative_path}"
+
+    async def resolve_url(self, stored_path: str | None) -> str | None:
+        if not stored_path:
+            return None
+        if is_r2_key(stored_path):
+            return await get_object_storage().presign(stored_path)
+        if stored_path.startswith("http://") or stored_path.startswith("https://"):
+            return stored_path
+        if stored_path.startswith("/static/"):
+            return stored_path
+        return self.get_full_path(stored_path)

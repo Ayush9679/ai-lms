@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { lessonService } from "@/services/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { PageTransition } from "@/components/shared/PageTransitions";
 import { ArrowLeft, Upload, File, Film, Loader2 } from "lucide-react";
@@ -11,22 +12,26 @@ import toast from "react-hot-toast";
 
 export default function LessonAssetUploadPage() {
   const { courseId, lessonId } = useParams();
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const videoAbort = useRef<AbortController | null>(null);
+  const pdfAbort = useRef<AbortController | null>(null);
 
   const handleVideoUpload = async () => {
     if (!videoFile) return;
     setIsUploadingVideo(true);
+    videoAbort.current = new AbortController();
     try {
-      await lessonService.uploadVideo(lessonId as string, videoFile);
+      await lessonService.uploadVideo(lessonId as string, videoFile, videoAbort.current.signal);
+      await queryClient.invalidateQueries({ queryKey: ["courseLessons", courseId] });
       toast.success("Lesson video uploaded successfully!");
       setVideoFile(null);
     } catch (err: any) {
-      console.error(err);
-      toast.error("Failed to upload lesson video.");
+      if (err?.name === "AbortError") toast("Video upload cancelled.");
+      else toast.error(err?.response?.data?.message ?? err?.message ?? "Failed to upload lesson video.");
     } finally {
       setIsUploadingVideo(false);
     }
@@ -35,13 +40,15 @@ export default function LessonAssetUploadPage() {
   const handlePdfUpload = async () => {
     if (!pdfFile) return;
     setIsUploadingPdf(true);
+    pdfAbort.current = new AbortController();
     try {
-      await lessonService.uploadPdf(lessonId as string, pdfFile);
+      await lessonService.uploadPdf(lessonId as string, pdfFile, pdfAbort.current.signal);
+      await queryClient.invalidateQueries({ queryKey: ["lesson", lessonId] });
       toast.success("Lesson PDF worksheet uploaded successfully!");
       setPdfFile(null);
     } catch (err: any) {
-      console.error(err);
-      toast.error("Failed to upload lesson PDF.");
+      if (err?.name === "AbortError") toast("PDF upload cancelled.");
+      else toast.error(err?.response?.data?.message ?? err?.message ?? "Failed to upload lesson PDF.");
     } finally {
       setIsUploadingPdf(false);
     }
@@ -73,7 +80,7 @@ export default function LessonAssetUploadPage() {
                 <Film className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-white">Lecture Video</h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">Upload video lessons (MP4 only). Supported size up to 100MB.</p>
+              <p className="text-xs text-zinc-500 leading-relaxed">Upload MP4, WebM, or Ogg video. Maximum 2048 MB. A failed single PUT must be retried from the beginning.</p>
               
               <input
                 type="file"
@@ -92,7 +99,9 @@ export default function LessonAssetUploadPage() {
                 </span>
               </label>
 
-              {videoFile && (
+              {isUploadingVideo ? (
+                <button type="button" onClick={() => videoAbort.current?.abort()} className="mt-2 rounded-xl border border-zinc-800 py-3 text-xs text-zinc-300">Cancel video upload</button>
+              ) : videoFile && (
                 <button
                   onClick={handleVideoUpload}
                   disabled={isUploadingVideo}
@@ -129,7 +138,9 @@ export default function LessonAssetUploadPage() {
                 </span>
               </label>
 
-              {pdfFile && (
+              {isUploadingPdf ? (
+                <button type="button" onClick={() => pdfAbort.current?.abort()} className="mt-2 rounded-xl border border-zinc-800 py-3 text-xs text-zinc-300">Cancel PDF upload</button>
+              ) : pdfFile && (
                 <button
                   onClick={handlePdfUpload}
                   disabled={isUploadingPdf}

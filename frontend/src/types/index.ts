@@ -70,6 +70,7 @@ export interface Lesson {
   id: string;
   course_id: string;
   title: string;
+  thumbnail?: string | null;
   content: string | null;
   video_url: string | null;
   pdf_url: string | null;
@@ -77,6 +78,7 @@ export interface Lesson {
   duration_minutes: number | null;
   order_index: number;
   is_published: boolean;
+  video_status?: "pending" | "uploading" | "ready";
   created_at: string;
   updated_at: string;
 }

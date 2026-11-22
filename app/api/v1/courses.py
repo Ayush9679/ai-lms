@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.dependencies.auth import get_current_user, get_optional_user, require_teacher
 from app.models.course import CourseStatus
 from app.models.user import User, UserRole
@@ -28,7 +28,10 @@ from app.services.file_service import FileService
 router = APIRouter()
 
 
-def _course_to_summary(course, total_lessons: int = 0, total_students: int = 0) -> CourseSummary:
+async def _course_to_summary(
+    course, total_lessons: int = 0, total_students: int = 0
+) -> CourseSummary:
+    file_svc = FileService()
     return CourseSummary(
         id=course.id,
         title=course.title,
@@ -37,7 +40,7 @@ def _course_to_summary(course, total_lessons: int = 0, total_students: int = 0) 
         category=course.category,
         level=course.level,
         status=course.status,
-        thumbnail=course.thumbnail,
+        thumbnail=await file_svc.resolve_url(course.thumbnail),
         price=float(course.price),
         instructor_name=course.instructor.full_name if course.instructor else "Unknown",
         total_lessons=total_lessons,
@@ -60,7 +63,7 @@ async def create_course(
 ) -> CourseSummary:
     svc = CourseService(db)
     course = await svc.create_course(current_user.id, request)
-    return _course_to_summary(course)
+    return await _course_to_summary(course)
 
 
 @router.get(
@@ -91,7 +94,7 @@ async def list_courses(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    items = [_course_to_summary(c) for c in courses]
+    items = [await _course_to_summary(c) for c in courses]
     return PaginatedResponse.create(items, total, page, page_size)
 
 
@@ -110,7 +113,7 @@ async def get_my_courses(
     svc = CourseService(db)
     skip = (page - 1) * page_size
     courses = await svc.list_teacher_courses(current_user.id, skip=skip, limit=page_size)
-    return [_course_to_summary(c) for c in courses]
+    return [await _course_to_summary(c) for c in courses]
 
 
 @router.get(
@@ -140,7 +143,7 @@ async def get_course(
         category=course.category,
         level=course.level,
         status=course.status,
-        thumbnail=course.thumbnail,
+        thumbnail=await FileService().resolve_url(course.thumbnail),
         price=float(course.price),
         tags=course.tags,
         instructor=course.instructor,
@@ -166,7 +169,7 @@ async def update_course(
 ) -> CourseSummary:
     svc = CourseService(db)
     course = await svc.update_course(course_id, current_user.id, current_user.role, request)
-    return _course_to_summary(course)
+    return await _course_to_summary(course)
 
 
 @router.delete(
@@ -203,9 +206,8 @@ async def upload_thumbnail(
 
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.save_image(file)
-    full_url = file_svc.get_full_path(file_path)
-    course = await svc.set_thumbnail(course, current_user.id, current_user.role, full_url)
-    return _course_to_summary(course)
+    course = await svc.set_thumbnail(course, current_user.id, current_user.role, file_path)
+    return await _course_to_summary(course)
 
 
 @router.post(
@@ -226,20 +228,23 @@ async def upload_course_file(
     await svc.get_manageable_course(course_id, current_user.id, current_user.role)
     file_svc = FileService()
     file_name, file_path, size, file_type, mime_type = await file_svc.save_any(file)
-    full_url = file_svc.get_full_path(file_path)
-
     repo = CourseFileRepository(db)
     course_file = await repo.create(
         course_id=course_id,
         uploaded_by=current_user.id,
         file_name=file_name,
         original_name=file.filename or file_name,
-        file_path=full_url,
+        file_path=file_path,
         file_type=file_type,
         mime_type=mime_type,
         size_bytes=size,
     )
-    return CourseFileResponse.model_validate(course_file)
+    return CourseFileResponse(
+        **{
+            **CourseFileResponse.model_validate(course_file).model_dump(),
+            "file_path": await file_svc.resolve_url(course_file.file_path),
+        }
+    )
 
 
 @router.get(
@@ -253,11 +258,35 @@ async def list_course_files(
     current_user: Annotated[User | None, Depends(get_optional_user)],
 ) -> list[CourseFileResponse]:
     course = await CourseService(db).get_course(course_id)
-    if course.status != CourseStatus.published and (
-        current_user is None
-        or (current_user.role != UserRole.admin and course.instructor_id != current_user.id)
-    ):
-        raise NotFoundError("Course", str(course_id))
+    is_manager = bool(
+        current_user
+        and (current_user.role == UserRole.admin or course.instructor_id == current_user.id)
+    )
+    if not is_manager:
+        if not current_user:
+            raise ForbiddenError("Authentication is required to access course files")
+        if course.price > 0:
+            raise ForbiddenError("Paid course files require a completed purchase")
+        from app.repositories.enrollment_repo import EnrollmentRepository
+
+        enrollment = await EnrollmentRepository(db).get_by_student_and_course(
+            current_user.id, course_id
+        )
+        if (
+            course.status != CourseStatus.published
+            or not enrollment
+            or enrollment.status.value not in {"active", "completed"}
+        ):
+            raise ForbiddenError("You must be enrolled to access course files")
     repo = CourseFileRepository(db)
     files = await repo.get_by_course(course_id)
-    return [CourseFileResponse.model_validate(f) for f in files]
+    file_svc = FileService()
+    return [
+        CourseFileResponse(
+            **{
+                **CourseFileResponse.model_validate(f).model_dump(),
+                "file_path": await file_svc.resolve_url(f.file_path),
+            }
+        )
+        for f in files
+    ]

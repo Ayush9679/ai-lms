@@ -42,8 +42,10 @@ class LessonResponse(BaseSchema):
     id: uuid.UUID
     course_id: uuid.UUID
     title: str
+    thumbnail: str | None = None
     content: str | None
     video_url: str | None
+    video_status: str = "pending"
     pdf_url: str | None
     transcript: str | None
     duration_minutes: int | None
@@ -61,6 +63,7 @@ class LessonSummary(BaseSchema):
     duration_minutes: int | None
     order_index: int
     is_published: bool
+    video_status: str = "pending"
     has_video: bool
     has_pdf: bool
 

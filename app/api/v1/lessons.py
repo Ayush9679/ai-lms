@@ -26,6 +26,15 @@ from app.services.lesson_service import LessonService
 router = APIRouter()
 
 
+async def _lesson_response(lesson) -> LessonResponse:
+    data = LessonResponse.model_validate(lesson).model_dump()
+    file_svc = FileService()
+    data["video_url"] = await file_svc.resolve_url(lesson.video_url)
+    data["thumbnail"] = await file_svc.resolve_url(lesson.thumbnail)
+    data["pdf_url"] = await file_svc.resolve_url(lesson.pdf_url)
+    return LessonResponse(**data)
+
+
 @router.post(
     "/courses/{course_id}/lessons",
     response_model=LessonResponse,
@@ -41,7 +50,7 @@ async def create_lesson(
 ) -> LessonResponse:
     svc = LessonService(db)
     lesson = await svc.create_lesson(course_id, current_user.id, current_user.role, request)
-    return LessonResponse.model_validate(lesson)
+    return await _lesson_response(lesson)
 
 
 @router.get(
@@ -64,6 +73,7 @@ async def list_lessons(
             duration_minutes=lesson.duration_minutes,
             order_index=lesson.order_index,
             is_published=lesson.is_published,
+            video_status=lesson.video_status,
             has_video=bool(lesson.video_url),
             has_pdf=bool(lesson.pdf_url),
         )
@@ -83,7 +93,7 @@ async def get_lesson(
 ) -> LessonResponse:
     svc = LessonService(db)
     lesson = await svc.get_lesson_for_user(lesson_id, current_user.id, current_user.role)
-    return LessonResponse.model_validate(lesson)
+    return await _lesson_response(lesson)
 
 
 @router.patch(
@@ -100,7 +110,7 @@ async def update_lesson(
 ) -> LessonResponse:
     svc = LessonService(db)
     lesson = await svc.update_lesson(lesson_id, current_user.id, current_user.role, request)
-    return LessonResponse.model_validate(lesson)
+    return await _lesson_response(lesson)
 
 
 @router.delete(
@@ -139,9 +149,10 @@ async def upload_lesson_video(
         lesson_id,
         current_user.id,
         current_user.role,
-        UpdateLessonRequest(video_url=file_svc.get_full_path(file_path)),
+        UpdateLessonRequest(video_url=file_path),
     )
-    return LessonResponse.model_validate(lesson)
+    lesson.video_status = "ready"
+    return await _lesson_response(lesson)
 
 
 @router.post(
@@ -164,9 +175,9 @@ async def upload_lesson_pdf(
         lesson_id,
         current_user.id,
         current_user.role,
-        UpdateLessonRequest(pdf_url=file_svc.get_full_path(file_path)),
+        UpdateLessonRequest(pdf_url=file_path),
     )
-    return LessonResponse.model_validate(lesson)
+    return await _lesson_response(lesson)
 
 
 @router.post(

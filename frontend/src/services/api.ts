@@ -22,6 +22,38 @@ import {
   AdminDashboardData,
 } from "@/types";
 
+async function directObjectUpload(
+  resourceType: "course" | "lesson",
+  resourceId: string,
+  assetType: "thumbnail" | "video" | "pdf" | "file",
+  file: File,
+  signal?: AbortSignal,
+  originalName?: string,
+) {
+  const grantResponse = await apiClient.post("/uploads/presign", {
+    resource_type: resourceType,
+    resource_id: resourceId,
+    asset_type: assetType,
+    mime_type: file.type,
+    size_bytes: file.size,
+    original_name: originalName,
+  });
+  const grant: { upload_url: string; upload_token: string } = grantResponse.data;
+  try {
+    const response = await fetch(grant.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": file.type, "If-None-Match": "*" },
+      body: file,
+      signal,
+    });
+    if (!response.ok) throw new Error(`Storage upload failed (${response.status}). Retry the upload.`);
+    await apiClient.post("/uploads/complete", { upload_token: grant.upload_token });
+  } catch (error) {
+    await apiClient.post("/uploads/cancel", { upload_token: grant.upload_token }).catch(() => undefined);
+    throw error;
+  }
+}
+
 // =============================================================================
 // AUTHENTICATION SERVICES
 // =============================================================================
@@ -101,22 +133,18 @@ export const courseService = {
     return res.data;
   },
 
-  async uploadThumbnail(id: string, file: File): Promise<Course> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/courses/${id}/thumbnail`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadThumbnail(id: string, file: File, signal?: AbortSignal): Promise<Course> {
+    await directObjectUpload("course", id, "thumbnail", file, signal);
+    return this.getDetails(id);
   },
 
-  async uploadFile(id: string, file: File, fileType: string): Promise<CourseFile> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/courses/${id}/files?file_type=${fileType}`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadFile(id: string, file: File, _fileType: string): Promise<CourseFile> {
+    await directObjectUpload("course", id, "file", file, undefined, file.name);
+    const files = await this.listFiles(id);
+    const matches = files.filter((item) => item.original_name === file.name);
+    const found = matches[matches.length - 1];
+    if (!found) throw new Error("Upload completed, but the file record could not be loaded.");
+    return found;
   },
 
   async listFiles(id: string): Promise<CourseFile[]> {
@@ -159,22 +187,19 @@ export const lessonService = {
     return res.data;
   },
 
-  async uploadVideo(id: string, file: File): Promise<Lesson> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/lessons/${id}/video`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadVideo(id: string, file: File, signal?: AbortSignal): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "video", file, signal);
+    return this.getDetails(id);
   },
 
-  async uploadPdf(id: string, file: File): Promise<Lesson> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await apiClient.post(`/lessons/${id}/pdf`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-    return res.data;
+  async uploadPdf(id: string, file: File, signal?: AbortSignal): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "pdf", file, signal);
+    return this.getDetails(id);
+  },
+
+  async uploadThumbnail(id: string, file: File, signal?: AbortSignal): Promise<Lesson> {
+    await directObjectUpload("lesson", id, "thumbnail", file, signal);
+    return this.getDetails(id);
   },
 
   async updateProgress(id: string, data: { is_completed: boolean; watch_time_seconds: number; completion_percentage: number }): Promise<LessonProgress> {

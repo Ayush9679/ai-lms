@@ -82,6 +82,8 @@ class LessonService:
             return await self.repo.get_by_course(course_id)
         if course.status != CourseStatus.published:
             return []
+        # Published syllabus summaries are visible on course previews; lesson detail and
+        # media URLs remain enrollment-gated in get_lesson_for_user.
         return await self.repo.get_published_by_course(course_id)
 
     async def get_lesson_for_user(
@@ -95,6 +97,14 @@ class LessonService:
             return lesson
         if course.status != CourseStatus.published or not lesson.is_published:
             raise NotFoundError("Lesson", str(lesson_id))
+        if course.price > 0:
+            raise ForbiddenError("Paid course media requires a completed purchase")
+        enrollment = await self.enrollment_repo.get_by_student_and_course(requester_id, course.id)
+        if not enrollment or enrollment.status not in {
+            EnrollmentStatus.active,
+            EnrollmentStatus.completed,
+        }:
+            raise ForbiddenError("You must be enrolled to view this lesson")
         return lesson
 
     async def update_lesson(
@@ -105,7 +115,15 @@ class LessonService:
         request: UpdateLessonRequest,
     ) -> Lesson:
         lesson = await self.get_editable_lesson(lesson_id, requester_id, requester_role)
-        update_data = request.model_dump(exclude_unset=True, exclude_none=True)
+        update_data = {
+            key: value
+            for key, value in request.model_dump(exclude_unset=True).items()
+            if value is not None
+            or key in {"content", "transcript", "video_url", "pdf_url", "duration_minutes"}
+        }
+        if "video_url" in update_data and update_data["video_url"] != lesson.video_url:
+            update_data["video_status"] = "pending"
+            update_data["video_upload_id"] = None
         return await self.repo.update(lesson, **update_data)
 
     async def delete_lesson(
@@ -130,6 +148,7 @@ class LessonService:
         if (
             course.status != CourseStatus.published
             or not lesson.is_published
+            or course.price > 0
             or not enrollment
             or enrollment.status not in {EnrollmentStatus.active, EnrollmentStatus.completed}
         ):

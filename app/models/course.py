@@ -4,7 +4,7 @@ AI-LMS Course Models — Courses and uploaded course files.
 import enum
 import uuid
 
-from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Enum, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,8 @@ class Course(UUIDBase):
         index=True,
     )
     thumbnail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    thumbnail_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    file_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     price: Mapped[float] = mapped_column(Numeric(10, 2), default=0.00, nullable=False)
     instructor_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
@@ -88,10 +90,12 @@ class Course(UUIDBase):
 class CourseFile(UUIDBase):
     """Files uploaded to a course (PDFs, videos, images)."""
     __tablename__ = "course_files"
+    __table_args__ = (Index("uq_course_files_upload_id", "upload_id", unique=True),)
 
     course_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

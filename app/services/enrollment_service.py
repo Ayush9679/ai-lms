@@ -29,6 +29,8 @@ class EnrollmentService:
             raise NotFoundError("Course", str(course_id))
         if course.status != CourseStatus.published:
             raise ForbiddenError("You can only enroll in published courses")
+        if course.price > 0:
+            raise ForbiddenError("Purchasing paid courses is not available yet")
 
         existing = await self.repo.get_by_student_and_course(student_id, course_id)
         if existing:

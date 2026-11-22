@@ -4,6 +4,9 @@ AI-LMS Course Tests — CRUD, search, and RBAC enforcement.
 
 import pytest
 from httpx import AsyncClient
+import uuid
+from app.models.course import Course
+from app.models.lesson import Lesson
 
 
 async def _register_and_login(client, email, password, role="teacher"):
@@ -13,6 +16,20 @@ async def _register_and_login(client, email, password, role="teacher"):
     )
     r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     return r.json()["access_token"]
+
+
+async def _meet_publish_requirements(db, course_id: str) -> None:
+    course = await db.get(Course, uuid.UUID(course_id))
+    course.thumbnail = "/static/test/course-thumbnail.png"
+    db.add(
+        Lesson(
+            course_id=course.id,
+            title="Ready video lesson",
+            video_url="/static/test/video.mp4",
+            video_status="ready",
+        )
+    )
+    await db.commit()
 
 
 @pytest.mark.asyncio
@@ -109,7 +126,7 @@ async def test_search_courses(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_course_crud_flow(client: AsyncClient):
+async def test_course_crud_flow(client: AsyncClient, db):
     """Full CRUD: create → get → update → delete."""
     token = await _register_and_login(client, "crud_teacher@test.com", "CrudPass123!", "teacher")
     headers = {"Authorization": f"Bearer {token}"}
@@ -122,6 +139,7 @@ async def test_course_crud_flow(client: AsyncClient):
     )
     assert create_r.status_code == 201
     course_id = create_r.json()["id"]
+    await _meet_publish_requirements(db, course_id)
 
     # Get
     anonymous_get = await client.get(f"/api/v1/courses/{course_id}")
@@ -148,7 +166,7 @@ async def test_course_crud_flow(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_enroll_in_course(client: AsyncClient):
+async def test_enroll_in_course(client: AsyncClient, db):
     """Student can enroll in a published course."""
     # Teacher creates and publishes a course
     t_token = await _register_and_login(client, "pub_teacher@test.com", "PubTeach123!", "teacher")
@@ -158,6 +176,7 @@ async def test_enroll_in_course(client: AsyncClient):
         headers={"Authorization": f"Bearer {t_token}"},
     )
     course_id = c_r.json()["id"]
+    await _meet_publish_requirements(db, course_id)
     await client.patch(
         f"/api/v1/courses/{course_id}",
         json={"status": "published"},
@@ -233,7 +252,7 @@ async def test_lesson_crud(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_quiz_create_and_submit(client: AsyncClient):
+async def test_quiz_create_and_submit(client: AsyncClient, db):
     """Teacher creates quiz; student submits attempt and gets graded."""
     t_token = await _register_and_login(client, "quiz_teacher@test.com", "QuizTeach123!", "teacher")
     t_headers = {"Authorization": f"Bearer {t_token}"}
@@ -245,6 +264,7 @@ async def test_quiz_create_and_submit(client: AsyncClient):
         headers=t_headers,
     )
     course_id = c_r.json()["id"]
+    await _meet_publish_requirements(db, course_id)
 
     # Create quiz
     q_r = await client.post(
@@ -310,3 +330,66 @@ async def test_quiz_create_and_submit(client: AsyncClient):
     result = attempt_r.json()
     assert result["passed"] is True
     assert result["percentage"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_missing_requirements_with_actionable_errors(client, db):
+    token = await _register_and_login(
+        client, "publish_rules@test.com", "PublishRules123!", "teacher"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    response = await client.post(
+        "/api/v1/courses/", json={"title": "Publishing Rules Course"}, headers=headers
+    )
+    course_id = response.json()["id"]
+    course = await db.get(Course, uuid.UUID(course_id))
+    course.title = "   "
+    await db.commit()
+
+    rejected = await client.patch(
+        f"/api/v1/courses/{course_id}", json={"status": "published"}, headers=headers
+    )
+    assert rejected.status_code == 422
+    message = rejected.json()["message"]
+    assert "nonempty course title" in message
+    assert "course thumbnail" in message
+    assert "at least one lesson" in message
+
+    course.title = "Publishing Rules Course"
+    course.thumbnail = "/static/test/thumb.png"
+    db.add(
+        Lesson(
+            course_id=course.id,
+            title="Ready video",
+            video_url="/static/test/ready.mp4",
+            video_status="ready",
+        )
+    )
+    db.add(Lesson(course_id=course.id, title="Still processing", video_status="uploading"))
+    await db.commit()
+    published = await client.patch(
+        f"/api/v1/courses/{course_id}", json={"status": "published"}, headers=headers
+    )
+    assert published.status_code == 200
+    assert published.json()["status"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_other_teacher_cannot_publish_course(client):
+    owner = await _register_and_login(
+        client, "publish_owner@test.com", "PublishOwner123!", "teacher"
+    )
+    course = await client.post(
+        "/api/v1/courses/",
+        json={"title": "Owned Draft"},
+        headers={"Authorization": f"Bearer {owner}"},
+    )
+    other = await _register_and_login(
+        client, "publish_other@test.com", "PublishOther123!", "teacher"
+    )
+    response = await client.patch(
+        f"/api/v1/courses/{course.json()['id']}",
+        json={"status": "published"},
+        headers={"Authorization": f"Bearer {other}"},
+    )
+    assert response.status_code == 403

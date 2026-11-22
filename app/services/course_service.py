@@ -8,7 +8,7 @@ from typing import Any
 from slugify import slugify
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.course import Course, CourseStatus
 from app.models.user import UserRole
@@ -103,6 +103,13 @@ class CourseService:
 
         update_data = request.model_dump(exclude_unset=True, exclude_none=True)
 
+        if update_data.get("status") == CourseStatus.published:
+            requirements = await self.get_publish_requirements(
+                course, title=update_data.get("title", course.title)
+            )
+            if requirements:
+                raise ValidationError("Cannot publish course: " + " ".join(requirements))
+
         # Re-slug if title changed
         if "title" in update_data:
             update_data["slug"] = await self._generate_unique_slug(
@@ -110,6 +117,18 @@ class CourseService:
             )
 
         return await self.repo.update(course, **update_data)
+
+    async def get_publish_requirements(self, course: Course, title: str | None = None) -> list[str]:
+        """Return actionable unmet publishing requirements for a course."""
+        requirements = []
+        effective_title = course.title if title is None else title
+        if not effective_title or not effective_title.strip():
+            requirements.append("Add a nonempty course title.")
+        if not course.thumbnail or not course.thumbnail.strip():
+            requirements.append("Upload a course thumbnail.")
+        if await self.lesson_repo.count_ready_video_by_course(course.id) < 1:
+            requirements.append("Upload and verify video for at least one lesson.")
+        return requirements
 
     async def delete_course(
         self, course_id: uuid.UUID, requester_id: uuid.UUID, requester_role: UserRole

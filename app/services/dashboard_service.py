@@ -3,6 +3,7 @@ AI-LMS Dashboard Service — aggregated stats for all three dashboard types.
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.course import Course, CourseStatus
 from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.models.user import User, UserRole
+from app.models.quiz import Quiz, QuizAttempt
 from app.repositories.assignment_repo import AssignmentRepository, SubmissionRepository
 from app.repositories.course_repo import CourseRepository
 from app.repositories.enrollment_repo import EnrollmentRepository
@@ -29,34 +31,40 @@ class DashboardService:
 
     async def get_student_dashboard(self, student_id: uuid.UUID) -> dict:
         """Dashboard data for a student user."""
-        enrollments = await self.enrollment_repo.get_by_student(student_id, skip=0, limit=10)
-        attempts = await self.quiz_attempt_repo.get_by_student(student_id, skip=0, limit=20)
-
         # Compute stats
-        total_enrolled = await self.enrollment_repo.count_by_student(student_id)
-        completed_count = sum(1 for e in enrollments if e.status == EnrollmentStatus.completed)
-        avg_progress = (
-            sum(e.progress for e in enrollments) / len(enrollments) if enrollments else 0.0
+        enrollment_stats = await self.db.execute(
+            select(
+                func.count(Enrollment.id),
+                func.count(Enrollment.id).filter(Enrollment.status == EnrollmentStatus.completed),
+                func.coalesce(func.avg(Enrollment.progress), 0.0),
+            ).where(
+                Enrollment.student_id == student_id,
+                Enrollment.deleted_at.is_(None),
+            )
         )
-
-        total_quizzes_taken = len(attempts)
-        passed_quizzes = sum(1 for a in attempts if a.passed)
-        avg_score = (
-            sum(a.percentage for a in attempts) / total_quizzes_taken
-            if total_quizzes_taken
-            else 0.0
+        total_enrolled, completed_count, avg_progress = enrollment_stats.one()
+        quiz_stats = await self.db.execute(
+            select(
+                func.count(QuizAttempt.id),
+                func.count(QuizAttempt.id).filter(QuizAttempt.passed.is_(True)),
+                func.coalesce(func.avg(QuizAttempt.percentage), 0.0),
+            ).where(
+                QuizAttempt.student_id == student_id,
+                QuizAttempt.deleted_at.is_(None),
+            )
         )
+        total_quizzes_taken, passed_quizzes, avg_score = quiz_stats.one()
 
         return {
             "progress_summary": {
                 "total_courses": total_enrolled,
                 "completed_courses": completed_count,
-                "average_progress": round(avg_progress, 1),
+                "average_progress": round(float(avg_progress), 1),
             },
             "quiz_summary": {
                 "total_quizzes_taken": total_quizzes_taken,
                 "passed_quizzes": passed_quizzes,
-                "average_score": round(avg_score, 1),
+                "average_score": round(float(avg_score), 1),
             },
             "enrolled_courses": [],
             "recent_activity": [],
@@ -67,16 +75,50 @@ class DashboardService:
         """Dashboard data for a teacher user."""
         courses = await self.course_repo.get_by_instructor(teacher_id, skip=0, limit=10)
 
-        total_courses = await self.course_repo.count_by_instructor(teacher_id)
-        published_courses = sum(1 for c in courses if c.status == CourseStatus.published)
-
-        # Approximate total students across all courses
-        total_students = 0
-        for course in courses:
-            total_students += await self.enrollment_repo.count_by_course(course.id)
-
-        # Approximate total quizzes across teacher's courses
-        total_quizzes_built = sum(len(c.quizzes) for c in courses)
+        course_stats_result = await self.db.execute(
+            select(
+                func.count(Course.id),
+                func.count(Course.id).filter(Course.status == CourseStatus.published),
+                func.count(Course.id).filter(Course.status == CourseStatus.draft),
+            ).where(Course.instructor_id == teacher_id, Course.deleted_at.is_(None))
+        )
+        total_courses, published_courses, draft_courses = course_stats_result.one()
+        student_count_result = await self.db.execute(
+            select(func.count(func.distinct(Enrollment.student_id)))
+            .join(Course, Course.id == Enrollment.course_id)
+            .where(
+                Course.instructor_id == teacher_id,
+                Course.deleted_at.is_(None),
+                Enrollment.deleted_at.is_(None),
+                Enrollment.status != EnrollmentStatus.dropped,
+            )
+        )
+        total_students = student_count_result.scalar_one()
+        month_start = datetime.now(timezone.utc).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        active_count_result = await self.db.execute(
+            select(func.count(func.distinct(Enrollment.student_id)))
+            .join(Course, Course.id == Enrollment.course_id)
+            .where(
+                Course.instructor_id == teacher_id,
+                Course.deleted_at.is_(None),
+                Enrollment.deleted_at.is_(None),
+                Enrollment.status != EnrollmentStatus.dropped,
+                Enrollment.created_at >= month_start,
+            )
+        )
+        active_students_this_month = active_count_result.scalar_one()
+        quiz_count_result = await self.db.execute(
+            select(func.count(Quiz.id))
+            .join(Course, Course.id == Quiz.course_id)
+            .where(
+                Course.instructor_id == teacher_id,
+                Course.deleted_at.is_(None),
+                Quiz.deleted_at.is_(None),
+            )
+        )
+        total_quizzes_built = quiz_count_result.scalar_one()
 
         course_list = []
         for course in courses:
@@ -105,11 +147,11 @@ class DashboardService:
             "course_stats": {
                 "total_courses": total_courses,
                 "published_courses": published_courses,
-                "draft_courses": total_courses - published_courses,
+                "draft_courses": draft_courses,
             },
             "student_stats": {
                 "total_students": total_students,
-                "active_students_this_month": total_students,
+                "active_students_this_month": active_students_this_month,
             },
             "quiz_stats": {
                 "total_quizzes_built": total_quizzes_built,

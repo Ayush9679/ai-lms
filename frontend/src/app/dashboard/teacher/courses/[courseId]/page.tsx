@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { courseService, lessonService, quizService, assignmentService } from "@/services/api";
@@ -18,6 +18,7 @@ import {
   Sparkles,
   Play,
   Upload,
+  Image as ImageIcon,
 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
@@ -27,6 +28,7 @@ export default function CourseDetailsManager() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"lessons" | "quizzes" | "assignments">("lessons");
+  const thumbnailAbort = useRef<AbortController | null>(null);
 
   // Fetch Course details
   const { data: course, isLoading: courseLoading } = useQuery({
@@ -67,6 +69,22 @@ export default function CourseDetailsManager() {
       queryClient.invalidateQueries({ queryKey: ["teacherCourse", courseId] });
       toast.success("Course status updated!");
     },
+    onError: (error: any) => toast.error(error?.response?.data?.message ?? "Could not publish course."),
+  });
+
+  const thumbnailMutation = useMutation({
+    mutationFn: ({ file, signal }: { file: File; signal: AbortSignal }) =>
+      courseService.uploadThumbnail(courseId as string, file, signal),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["teacherCourse", courseId] });
+      await queryClient.invalidateQueries({ queryKey: ["course"] });
+      toast.success("Course thumbnail updated.");
+    },
+    onError: (error: any) => {
+      if (error?.name !== "AbortError") {
+        toast.error(error?.response?.data?.message ?? error?.message ?? "Could not upload the thumbnail.");
+      }
+    },
   });
 
   const handleDeleteCourse = () => {
@@ -84,6 +102,14 @@ export default function CourseDetailsManager() {
   }
 
   if (!course) return null;
+
+  const publishRequirements: string[] = [];
+  if (!course.title?.trim()) publishRequirements.push("Add a nonempty course title.");
+  if (!course.thumbnail?.trim()) publishRequirements.push("Upload a course thumbnail.");
+  if (!lessons?.some((lesson) => lesson.video_status === "ready")) {
+    publishRequirements.push("Upload and verify video for at least one lesson.");
+  }
+  const publishDisabled = lessonsLoading || publishRequirements.length > 0;
 
   return (
     <DashboardLayout>
@@ -106,6 +132,29 @@ export default function CourseDetailsManager() {
             </div>
 
             <div className="flex items-center gap-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm font-semibold text-zinc-300 hover:text-white">
+                <ImageIcon className="h-4 w-4" />
+                {thumbnailMutation.isPending ? "Uploading…" : "Course thumbnail"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="sr-only"
+                  disabled={thumbnailMutation.isPending}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      thumbnailAbort.current = new AbortController();
+                      thumbnailMutation.mutate({ file, signal: thumbnailAbort.current.signal });
+                    }
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              {thumbnailMutation.isPending && (
+                <button type="button" onClick={() => thumbnailAbort.current?.abort()} className="rounded-xl border border-zinc-800 px-3 py-2 text-xs text-zinc-300">
+                  Cancel upload
+                </button>
+              )}
               <button
                 onClick={handleDeleteCourse}
                 disabled={deleteCourseMutation.isPending}
@@ -118,7 +167,9 @@ export default function CourseDetailsManager() {
               {course.status === "draft" ? (
                 <button
                   onClick={() => publishCourseMutation.mutate("published")}
-                  disabled={publishCourseMutation.isPending}
+                  disabled={publishCourseMutation.isPending || publishDisabled}
+                  aria-describedby="course-publish-help"
+                  title={publishRequirements.join(" ") || "Course meets the publishing requirements."}
                   className="px-5 py-3 text-sm font-semibold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-xl shadow-md transition"
                 >
                   Publish Course
@@ -133,6 +184,13 @@ export default function CourseDetailsManager() {
                 </button>
               )}
             </div>
+            {course.status === "draft" && (
+              <div id="course-publish-help" aria-live="polite" className="text-right text-xs text-zinc-400">
+                {lessonsLoading ? "Checking publishing requirements…" : publishRequirements.length
+                  ? <span>To publish: {publishRequirements.join(" ")}</span>
+                  : "Ready to publish: title, thumbnail, and a verified lesson video are complete."}
+              </div>
+            )}
           </div>
 
           {/* TABS SELECTOR */}

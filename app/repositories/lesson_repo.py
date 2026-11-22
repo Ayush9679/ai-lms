@@ -47,6 +47,20 @@ class LessonRepository(BaseRepository[Lesson]):
         )
         return result.scalar_one()
 
+    async def count_ready_video_by_course(self, course_id: uuid.UUID) -> int:
+        from sqlalchemy import func
+
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(Lesson)
+            .where(
+                Lesson.course_id == course_id,
+                Lesson.video_status == "ready",
+                Lesson.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one()
+
 
 class LessonProgressRepository(BaseRepository[LessonProgress]):
     def __init__(self, db: AsyncSession) -> None:
