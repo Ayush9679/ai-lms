@@ -47,6 +47,7 @@ pip-wheel-metadata/
 # Virtual Environments
 ############################################
 venv/
+venv_new/
 .venv/
 ENV/
 env/
@@ -248,6 +249,7 @@ backend/dist/
 ############################################
 # Ignore Local SQLite Databases
 ############################################
+*.db
 backend/*.db
 backend/*.sqlite3
 
