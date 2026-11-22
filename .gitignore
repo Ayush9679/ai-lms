@@ -32,6 +32,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Keep frontend source modules tracked by Git
+!frontend/src/lib/
+!frontend/src/lib/**
 lib64/
 parts/
 sdist/
