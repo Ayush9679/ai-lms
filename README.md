@@ -1,380 +1,167 @@
-# AI-LMS — Enterprise AI Learning Management System
+# AI-LMS
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi)](https://fastapi.tiangolo.com)
-[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python)](https://python.org)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql)](https://postgresql.org)
-[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00)](https://sqlalchemy.org)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://docker.com)
-[![Gemini](https://img.shields.io/badge/Gemini-1.5Flash-4285F4?logo=google)](https://aistudio.google.com)
+AI-LMS is a learning management system with a FastAPI backend and a Next.js web client. It supports student, teacher, and admin accounts; course delivery; quizzes and assignments; dashboards; and optional Gemini-powered study tools.
 
-A production-grade, enterprise AI Learning Management System backend built with **FastAPI**, **PostgreSQL**, **SQLAlchemy 2.0**, and **Google Gemini AI**.
+## Features
 
----
+- JWT access and refresh tokens, bcrypt password hashing, and role checks for teacher and admin operations.
+- Course creation and publishing, lessons, course files, student enrollment, and lesson progress.
+- Quiz creation (manual or AI-generated), attempts, answer records, and score history.
+- Assignments, student submissions, and teacher grading.
+- Student, teacher, and admin dashboard APIs, plus paginated course search.
+- Optional Gemini API integration for tutor chat, notes, summaries, flashcards, study plans, quiz generation, and recommendations.
+- Validated uploads for course resources, lesson media, avatars, and assignment submissions.
 
-## ✨ Features
+The API has email verification and password reset endpoints and stores their tokens, but SMTP delivery is not implemented. The AI recommendation prompt currently receives the student ID and optional course and published lesson titles; it does not calculate recommendations from quiz scores or lesson progress. Billing, paid subscriptions, and standalone learning paths are not implemented.
 
-### 🔐 Authentication & Security
-- JWT access + refresh tokens
-- bcrypt password hashing
-- Email verification flow
-- Forgot/reset password
-- Role-Based Access Control (RBAC): Student, Teacher, Admin
-- Rate limiting (100 req/min global, 10 req/min for AI)
-- CORS configuration
+## Tech stack
 
-### 📚 Course Management
-- Full CRUD with slug generation
-- Thumbnail & file uploads (images, videos, PDFs)
-- Course levels (Beginner, Intermediate, Advanced)
-- Draft/Published/Archived status workflow
-- Full-text search with filtering and sorting
+| Area | Technology |
+| --- | --- |
+| Backend API | Python, FastAPI, Pydantic |
+| Database | PostgreSQL, async SQLAlchemy, Alembic |
+| AI provider | Google Gemini API (optional) |
+| Frontend | Next.js App Router, React, TypeScript, Tailwind CSS |
+| Tests and lint | pytest, pytest-asyncio, Ruff, ESLint, TypeScript |
+| Local services | Docker Compose |
 
-### 📖 Lesson System
-- Ordered lessons with video + PDF support
-- Transcript storage for AI processing
-- Per-student progress tracking (watch time, completion %)
-- Automatic course completion calculation
+## Architecture
 
-### ❓ Quiz Engine
-- MCQ, True/False, Subjective question types
-- Manual creation + AI generation (Gemini)
-- Negative marking support
-- Configurable attempt limits
-- Auto-grading with instant score breakdown
-- Score history per student
+```mermaid
+flowchart LR
+  Browser[Next.js browser client] -->|HTTP /api/v1| API[FastAPI]
+  API --> Auth[JWT and role dependencies]
+  API --> Services[Application services]
+  Services --> Repos[SQLAlchemy repositories]
+  Repos --> DB[(PostgreSQL)]
+  Services --> Files[Local upload directory]
+  Services -->|Optional AI requests| Gemini[Gemini API]
+  Migrations[Alembic migrations] --> DB
+```
 
-### 📝 Assignment System
-- Teacher creates assignments with due dates
-- Students submit text and/or file uploads
-- Teacher grades with marks + feedback
-- Complete submission history
+<!-- Screenshot placeholder: add a student dashboard image at docs/screenshots/student-dashboard.png. -->
+<!-- Screenshot placeholder: add a course lesson image at docs/screenshots/course-lesson.png. -->
 
-### 🤖 AI Features (Google Gemini 1.5 Flash)
-- **AI Tutor**: Context-aware chat with conversation history
-- **Notes Generator**: Structured notes from lessons/PDFs/text
-- **Summarization**: Short/medium/long summaries with key points
-- **Quiz Generator**: AI-generated quizzes from any content
-- **Flashcard Generator**: Study flashcards from lessons/text
-- **Study Planner**: Personalized weekly study plans
-- **Learning Recommendations**: Next lessons, weak topics, practice plan
+## Requirements
 
-### 📊 Dashboards
-- **Student**: Enrolled courses, progress, quiz scores, recent activity
-- **Teacher**: Course stats, enrolled students, analytics
-- **Admin**: Platform-wide stats (users, courses, enrollments)
+- Docker Desktop for the local PostgreSQL service.
+- Python 3.12 or newer for local backend tools.
+- Node.js 20.9 or newer and npm for the frontend.
+- A Gemini API key only if you want to use AI endpoints.
 
-### 🏗️ Architecture
-- Clean Architecture (API → Services → Repositories → Models)
-- Async SQLAlchemy 2.0 with asyncpg
-- Alembic migrations
-- Structured JSON logging with request correlation
-- Docker Compose for one-command startup
+## Local setup
 
----
+1. Copy `.env.example` to `.env`. Generate `SECRET_KEY` with `python -c "import secrets; print(secrets.token_hex(32))"`, and replace the database password placeholder with a URL-safe value. Set `GEMINI_API_KEY` only if you need AI features.
+2. Start PostgreSQL and the API:
 
-## 🚀 Quick Start
+   ```bash
+   docker compose up --build -d
+   docker compose exec api alembic upgrade head
+   docker compose exec api python -m scripts.seed_demo
+   ```
 
-### Prerequisites
-- [Docker Desktop](https://docker.com/products/docker-desktop) (required)
-- A [Gemini API key](https://aistudio.google.com/app/apikey) (optional, for AI features)
+3. Start the frontend in another terminal:
 
-### 1. Clone & Configure
+   ```bash
+   cd frontend
+   npm ci
+   cp .env.local.example .env.local
+   npm run dev
+   ```
+
+4. Open `http://localhost:3000`. The backend is at `http://localhost:8000`; interactive API docs are at `/docs`.
+
+The Compose service passes the database URL to the API using the `postgres` service name. To run the API directly on the host, set `DATABASE_URL` to a host-reachable PostgreSQL URL first. Do not commit `.env` or `.env.local`.
+
+## Demo account
+
+Run the seed command after migrations. It creates sample teacher and student accounts, a published Python course, one lesson, and a student enrollment. The seed is idempotent and does not overwrite existing accounts.
+
+| Role | Email | Password |
+| --- | --- | --- |
+| Student | `demo@ai-lms.local` | `DemoOnly123!` |
+| Teacher | `teacher-demo@ai-lms.local` | `DemoOnly123!` |
+
+These credentials are for a disposable demo database only. Do not use them for real users or production data. The demo student login is the recommended recruiter tour.
+
+## Environment variables
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Async SQLAlchemy URL (`postgresql+asyncpg://...`) |
+| `SECRET_KEY` | Yes | JWT signing key; use a random value of at least 32 characters |
+| `APP_NAME`, `APP_VERSION` | No | API name and version |
+| `ENVIRONMENT` | No | Environment label; `production` enables HSTS |
+| `DEBUG` | No | SQL echo and development setting; keep `false` in deployment |
+| `ALGORITHM` | No | JWT algorithm; supported value is `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | No | Access token lifetime (default 60) |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | No | Refresh token lifetime (default 7) |
+| `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` | No | Async PostgreSQL pool sizing |
+| `DATABASE_SSL` | No | Enable TLS for PostgreSQL connections (default `false`) |
+| `CORS_ORIGINS` | No | JSON array of explicit browser origins; wildcard is rejected |
+| `UPLOAD_DIR` | No | Local upload directory (default `./uploads`) |
+| `MAX_UPLOAD_SIZE_MB` | No | Maximum upload size (default 50 MB) |
+| `ALLOWED_IMAGE_TYPES`, `ALLOWED_VIDEO_TYPES`, `ALLOWED_DOCUMENT_TYPES` | No | JSON arrays of accepted MIME types |
+| `GEMINI_API_KEY` | For AI | Gemini API key; leave empty to disable AI operations |
+| `GEMINI_MODEL` | No | Gemini model name |
+| `RATE_LIMIT_PER_MINUTE`, `AI_RATE_LIMIT_PER_MINUTE` | No | Per-IP request limits |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` | No | Reserved SMTP configuration; no email sender is implemented |
+| `EMAILS_FROM_EMAIL`, `EMAILS_FROM_NAME` | No | Sender labels for a future email integration |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Compose | Local PostgreSQL container credentials |
+| `NEXT_PUBLIC_API_URL` | Frontend | Backend origin without `/api/v1` (default `http://localhost:8000`) |
+
+## API overview
+
+All application routes use `/api/v1`.
+
+| Group | Main routes |
+| --- | --- |
+| Authentication | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/me`, `/auth/verify-email`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/change-password` |
+| Users | `/users/me`, `/users/`, `/users/{user_id}` |
+| Courses and lessons | `/courses`, `/courses/{course_id}/lessons`, `/lessons/{lesson_id}`, `/lessons/{lesson_id}/progress` |
+| Enrollments | `/enrollments`, `/enrollments/my`, `/enrollments/{course_id}/status` |
+| Quizzes | `/courses/{course_id}/quizzes`, `/quizzes/{quiz_id}/attempts`, `/quizzes/students/quiz-history` |
+| Assignments | `/courses/{course_id}/assignments`, `/assignments/{assignment_id}/submit`, `/submissions/{submission_id}/grade` |
+| AI | `/ai/chat`, `/ai/notes/generate`, `/ai/summarize`, `/ai/flashcards/generate`, `/ai/study-plan/generate`, `/ai/recommendations` |
+| Dashboards and search | `/dashboard/student`, `/dashboard/teacher`, `/dashboard/admin`, `/search/courses` |
+| Health | `/health`, `/api/v1/health` |
+
+The route modules and request/response schemas are in `app/api/v1/` and `app/schemas/`. Use `/docs` to inspect the generated OpenAPI document.
+
+## How AI recommendations work
+
+AI calls go to the configured Gemini model through `google-genai`; no local model weights are stored in this repository. The recommendation service includes the authenticated user's ID and, when a course is supplied, the course name and up to ten published lesson titles in its prompt. Gemini returns a JSON recommendation shape. If Gemini is unavailable or the key is missing, AI operations return a service-unavailable response. Configure the API key on the backend only.
+
+## Tests and quality checks
+
+Create a virtual environment, install the development dependencies, and run the automated suite and static checks:
 
 ```bash
-git clone <your-repo>
-cd ai-lms
-cp .env.example .env
+python -m venv .venv
+# Windows: .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+ruff check app tests alembic
+ruff format --check app tests alembic
+pytest -q
 ```
 
-Edit `.env` and set:
-```env
-SECRET_KEY=<generate with: python -c "import secrets; print(secrets.token_hex(32))">
-GEMINI_API_KEY=AIza...  # Your Gemini API key
-```
+Tests that make live Gemini calls are opt-in with `RUN_LIVE_AI_TESTS=true`; they also require a valid API key and can use provider quota. Recommendation route coverage uses a deterministic stub and does not call Gemini.
 
-### 2. Start (One Command)
+Frontend checks:
 
 ```bash
-docker compose up --build
+cd frontend
+npm ci
+npm run lint
+npm run type-check
+npm run build
 ```
 
-This will:
-1. Build the FastAPI image
-2. Start PostgreSQL with health checks
-3. Start the API server (waits for DB to be ready)
-4. Create upload directories
+## Live demo
 
-### 3. Run Migrations
+`https://<your-deployed-frontend-url>` (replace after deployment).
 
-```bash
-docker compose exec api alembic upgrade head
-```
+## License
 
-### 4. Open API Docs
-
-| URL | Description |
-|-----|-------------|
-| http://localhost:8000/docs | **Swagger UI** (interactive) |
-| http://localhost:8000/redoc | **ReDoc** (readable) |
-| http://localhost:8000/ | Health check |
-
----
-
-## 🔑 API Authentication
-
-1. **Register**: `POST /api/v1/auth/register`
-2. **Login**: `POST /api/v1/auth/login` → get `access_token`
-3. In Swagger, click **Authorize 🔒** → enter `<your_token>`
-4. All protected endpoints now work
-
----
-
-## 📡 API Endpoints
-
-### 🔐 Authentication (`/api/v1/auth`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/register` | Register new user |
-| POST | `/login` | Login, get tokens |
-| POST | `/refresh` | Refresh access token |
-| GET | `/me` | Get current user |
-| POST | `/verify-email` | Verify email |
-| POST | `/forgot-password` | Request password reset |
-| POST | `/reset-password` | Complete password reset |
-| POST | `/change-password` | Change own password |
-
-### 👤 Users (`/api/v1/users`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| GET | `/me` | All users |
-| PATCH | `/me` | All users |
-| POST | `/me/avatar` | All users |
-| GET | `/` | Admin only |
-| GET | `/{id}` | Admin only |
-| PATCH | `/{id}` | Admin only |
-| DELETE | `/{id}` | Admin only |
-
-### 📚 Courses (`/api/v1/courses`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| POST | `/` | Teacher/Admin |
-| GET | `/` | Public |
-| GET | `/my` | Teacher/Admin |
-| GET | `/{id}` | Public |
-| PATCH | `/{id}` | Teacher (own) / Admin |
-| DELETE | `/{id}` | Teacher (own) / Admin |
-| POST | `/{id}/thumbnail` | Teacher (own) / Admin |
-| POST | `/{id}/files` | Teacher (own) / Admin |
-| GET | `/{id}/files` | Any |
-
-### 📖 Lessons (`/api/v1`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| POST | `/courses/{id}/lessons` | Teacher/Admin |
-| GET | `/courses/{id}/lessons` | Any (published only for students) |
-| GET | `/lessons/{id}` | Any |
-| PATCH | `/lessons/{id}` | Teacher (own) / Admin |
-| DELETE | `/lessons/{id}` | Teacher (own) / Admin |
-| POST | `/lessons/{id}/video` | Teacher/Admin |
-| POST | `/lessons/{id}/pdf` | Teacher/Admin |
-| POST | `/lessons/{id}/progress` | Student |
-| GET | `/lessons/{id}/progress` | Student |
-
-### 🎓 Enrollments (`/api/v1/enrollments`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| POST | `/` | Student |
-| GET | `/my` | Student |
-| DELETE | `/{course_id}` | Student |
-| GET | `/courses/{id}/students` | Teacher/Admin |
-| GET | `/{course_id}/status` | Any |
-
-### ❓ Quizzes (`/api/v1`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| POST | `/courses/{id}/quizzes` | Teacher/Admin |
-| POST | `/courses/{id}/quizzes/ai-generate` | Teacher/Admin |
-| GET | `/courses/{id}/quizzes` | Any |
-| GET | `/quizzes/{id}` | Any |
-| PATCH | `/quizzes/{id}` | Teacher (own) / Admin |
-| DELETE | `/quizzes/{id}` | Teacher (own) / Admin |
-| POST | `/quizzes/{id}/attempts` | Student |
-| GET | `/quizzes/{id}/my-attempts` | Student |
-| GET | `/students/quiz-history` | Student |
-
-### 📝 Assignments (`/api/v1`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| POST | `/courses/{id}/assignments` | Teacher/Admin |
-| GET | `/courses/{id}/assignments` | Any |
-| GET | `/assignments/{id}` | Any |
-| PATCH | `/assignments/{id}` | Teacher (own) / Admin |
-| DELETE | `/assignments/{id}` | Teacher (own) / Admin |
-| POST | `/assignments/{id}/submit` | Student |
-| POST | `/assignments/{id}/submit-file` | Student |
-| GET | `/assignments/{id}/submissions` | Teacher (own) / Admin |
-| PATCH | `/submissions/{id}/grade` | Teacher (own) / Admin |
-| GET | `/my-submissions` | Student |
-
-### 🤖 AI Features (`/api/v1/ai`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/chat` | AI tutor chat |
-| GET | `/chat/sessions` | List sessions |
-| GET | `/chat/sessions/{id}` | Session history |
-| DELETE | `/chat/sessions/{id}` | Delete session |
-| POST | `/notes/generate` | Generate notes |
-| GET | `/notes` | List my notes |
-| POST | `/summarize` | Summarize content |
-| POST | `/flashcards/generate` | Generate flashcards |
-| GET | `/flashcards` | List my flashcards |
-| POST | `/study-plan/generate` | Generate study plan |
-| GET | `/study-plans` | List my plans |
-| GET | `/recommendations` | Get recommendations |
-
-### 📊 Dashboard (`/api/v1/dashboard`)
-| Method | Endpoint | Access |
-|--------|----------|--------|
-| GET | `/student` | Any |
-| GET | `/teacher` | Any |
-| GET | `/admin` | Admin only |
-
-### 🔍 Search (`/api/v1/search`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/courses` | Full-text course search |
-
----
-
-## 🏛️ Architecture
-
-```
-app/
-├── api/v1/          # Routers (routing only, no business logic)
-│   ├── auth.py
-│   ├── users.py
-│   ├── courses.py
-│   ├── lessons.py
-│   ├── enrollments.py
-│   ├── quizzes.py
-│   ├── assignments.py
-│   ├── ai.py
-│   ├── dashboard.py
-│   └── search.py
-├── core/            # Configuration, security, logging, exceptions
-├── models/          # SQLAlchemy 2.0 ORM models (UUID PKs, soft delete)
-├── schemas/         # Pydantic v2 request/response models
-├── repositories/    # Database access layer (no SQL in routers/services)
-├── services/        # Business logic layer
-├── ai/              # Gemini AI client and feature service
-├── middleware/      # Rate limiting, request logging
-└── dependencies/    # FastAPI dependencies (auth guards, DB session)
-alembic/             # Database migrations
-tests/               # pytest test suite
-```
-
----
-
-## 🌐 Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DATABASE_URL` | ✅ | PostgreSQL connection string |
-| `SECRET_KEY` | ✅ | JWT signing key (32+ chars) |
-| `GEMINI_API_KEY` | ⚡ | Google Gemini API key (for AI features) |
-| `ALGORITHM` | | JWT algorithm (default: HS256) |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | | Token expiry (default: 60) |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | | Refresh expiry (default: 7) |
-| `CORS_ORIGINS` | | Allowed origins (JSON array) |
-| `UPLOAD_DIR` | | File upload path (default: /app/uploads) |
-| `MAX_UPLOAD_SIZE_MB` | | Max file size in MB (default: 50) |
-| `GEMINI_MODEL` | | Gemini model (default: gemini-1.5-flash) |
-| `RATE_LIMIT_PER_MINUTE` | | Global rate limit (default: 100) |
-| `AI_RATE_LIMIT_PER_MINUTE` | | AI rate limit (default: 10) |
-| `SMTP_HOST` | | SMTP server (optional, for email) |
-| `DEBUG` | | Enable debug logging (default: false) |
-
----
-
-## 🧪 Running Tests
-
-```bash
-# Install test dependencies
-pip install aiosqlite pytest-asyncio
-
-# Run tests
-docker compose exec api pytest tests/ -v
-
-# With coverage
-docker compose exec api pytest tests/ -v --cov=app --cov-report=term-missing
-```
-
----
-
-## 🗄️ Database Migrations
-
-```bash
-# Run all migrations
-docker compose exec api alembic upgrade head
-
-# Create a new migration
-docker compose exec api alembic revision --autogenerate -m "description"
-
-# Downgrade one step
-docker compose exec api alembic downgrade -1
-
-# Show migration history
-docker compose exec api alembic history
-```
-
----
-
-## 🐳 Docker Commands
-
-```bash
-# Start all services
-docker compose up --build
-
-# Start in background
-docker compose up -d --build
-
-# View logs
-docker compose logs -f api
-docker compose logs -f postgres
-
-# Stop
-docker compose down
-
-# Stop and remove volumes (DELETES ALL DATA)
-docker compose down -v
-
-# Rebuild just the API
-docker compose up --build api
-```
-
----
-
-## 🔒 RBAC Summary
-
-| Permission | Student | Teacher | Admin |
-|-----------|---------|---------|-------|
-| Register / Login | ✅ | ✅ | ✅ |
-| View courses | ✅ | ✅ | ✅ |
-| Enroll in courses | ✅ | | |
-| Watch lessons / take quizzes | ✅ | | |
-| Submit assignments | ✅ | | |
-| Use AI tutor / notes / flashcards | ✅ | ✅ | ✅ |
-| Create / edit courses | | ✅ | ✅ |
-| Upload videos / PDFs / lessons | | ✅ | ✅ |
-| Create quizzes (manual + AI) | | ✅ | ✅ |
-| Create assignments / grade | | ✅ | ✅ |
-| View enrolled students | | ✅ | ✅ |
-| Manage all users | | | ✅ |
-| Delete anything | | | ✅ |
-| Admin dashboard | | | ✅ |
-
----
-
-## 📝 License
-
-MIT License — See [LICENSE](LICENSE) for details.
+No license file is currently included.
