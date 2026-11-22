@@ -19,6 +19,104 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# These shared types are created explicitly in upgrade() before any tables.
+# Setting create_type=False prevents op.create_table() from creating them again.
+USER_ROLE_ENUM = postgresql.ENUM(
+    "student", "teacher", "admin", name="user_role", schema="public", create_type=False
+)
+COURSE_LEVEL_ENUM = postgresql.ENUM(
+    "beginner", "intermediate", "advanced", name="course_level", schema="public", create_type=False
+)
+COURSE_STATUS_ENUM = postgresql.ENUM(
+    "draft", "published", "archived", name="course_status", schema="public", create_type=False
+)
+FILE_TYPE_ENUM = postgresql.ENUM(
+    "image",
+    "video",
+    "document",
+    "assignment",
+    "other",
+    name="file_type",
+    schema="public",
+    create_type=False,
+)
+ENROLLMENT_STATUS_ENUM = postgresql.ENUM(
+    "active",
+    "completed",
+    "dropped",
+    "pending",
+    name="enrollment_status",
+    schema="public",
+    create_type=False,
+)
+QUESTION_TYPE_ENUM = postgresql.ENUM(
+    "mcq", "true_false", "subjective", name="question_type", schema="public", create_type=False
+)
+DIFFICULTY_LEVEL_ENUM = postgresql.ENUM(
+    "easy", "medium", "hard", name="difficulty_level", schema="public", create_type=False
+)
+
+POSTGRES_ENUMS = (
+    USER_ROLE_ENUM,
+    COURSE_LEVEL_ENUM,
+    COURSE_STATUS_ENUM,
+    FILE_TYPE_ENUM,
+    ENROLLMENT_STATUS_ENUM,
+    QUESTION_TYPE_ENUM,
+    DIFFICULTY_LEVEL_ENUM,
+)
+
+
+def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM) -> bool:
+    """Create a missing public enum, or validate and reuse the existing type.
+
+    Returns True when this migration creates the type. A same-named non-enum
+    object or enum with different labels is an error; neither case is ignored.
+    """
+    schema = enum_type.schema or "public"
+    rows = bind.execute(
+        sa.text(
+            """
+            SELECT t.typtype, e.enumlabel
+            FROM pg_catalog.pg_type AS t
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+            LEFT JOIN pg_catalog.pg_enum AS e ON e.enumtypid = t.oid
+            WHERE n.nspname = :schema AND t.typname = :type_name
+            ORDER BY e.enumsortorder
+            """
+        ),
+        {"schema": schema, "type_name": enum_type.name},
+    ).all()
+
+    if not rows:
+        enum_type.create(bind, checkfirst=False)
+        return True
+
+    type_kind = rows[0][0]
+    actual_labels = [row[1] for row in rows if row[1] is not None]
+    expected_labels = list(enum_type.enums)
+    if type_kind != "e":
+        raise RuntimeError(
+            f"Cannot migrate: {schema}.{enum_type.name} already exists but is not a PostgreSQL enum"
+        )
+    if actual_labels != expected_labels:
+        raise RuntimeError(
+            f"Cannot migrate: {schema}.{enum_type.name} has labels {actual_labels!r}; "
+            f"expected {expected_labels!r} in that order"
+        )
+
+    return False
+
+
+def _require_public_schema(bind) -> None:
+    current_schema = bind.execute(sa.text("SELECT current_schema()")).scalar_one()
+    if current_schema != "public":
+        raise RuntimeError(
+            "Refusing to create AI-LMS tables: PostgreSQL current_schema() is "
+            f"{current_schema!r}, expected 'public'"
+        )
+
+
 def upgrade() -> None:
     # ==========================================================================
     # Enums
@@ -26,17 +124,9 @@ def upgrade() -> None:
     bind = op.get_bind()
     is_postgresql = bind.dialect.name == "postgresql"
     if is_postgresql:
-        op.execute("CREATE TYPE user_role AS ENUM ('student', 'teacher', 'admin')")
-        op.execute("CREATE TYPE course_level AS ENUM ('beginner', 'intermediate', 'advanced')")
-        op.execute("CREATE TYPE course_status AS ENUM ('draft', 'published', 'archived')")
-        op.execute(
-            "CREATE TYPE file_type AS ENUM ('image', 'video', 'document', 'assignment', 'other')"
-        )
-        op.execute(
-            "CREATE TYPE enrollment_status AS ENUM ('active', 'completed', 'dropped', 'pending')"
-        )
-        op.execute("CREATE TYPE question_type AS ENUM ('mcq', 'true_false', 'subjective')")
-        op.execute("CREATE TYPE difficulty_level AS ENUM ('easy', 'medium', 'hard')")
+        _require_public_schema(bind)
+        for enum_type in POSTGRES_ENUMS:
+            _ensure_postgresql_enum(bind, enum_type)
 
     # ==========================================================================
     # users
@@ -49,7 +139,7 @@ def upgrade() -> None:
         sa.Column("full_name", sa.String(255), nullable=False),
         sa.Column(
             "role",
-            sa.Enum("student", "teacher", "admin", name="user_role"),
+            USER_ROLE_ENUM,
             nullable=False,
             server_default="student",
         ),
@@ -128,13 +218,13 @@ def upgrade() -> None:
         sa.Column("category", sa.String(100), nullable=True),
         sa.Column(
             "level",
-            sa.Enum("beginner", "intermediate", "advanced", name="course_level"),
+            COURSE_LEVEL_ENUM,
             nullable=False,
             server_default="beginner",
         ),
         sa.Column(
             "status",
-            sa.Enum("draft", "published", "archived", name="course_status"),
+            COURSE_STATUS_ENUM,
             nullable=False,
             server_default="draft",
         ),
@@ -185,7 +275,7 @@ def upgrade() -> None:
         sa.Column("file_path", sa.String(1000), nullable=False),
         sa.Column(
             "file_type",
-            sa.Enum("image", "video", "document", "assignment", "other", name="file_type"),
+            FILE_TYPE_ENUM,
             nullable=False,
         ),
         sa.Column("mime_type", sa.String(100), nullable=False),
@@ -282,7 +372,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "status",
-            sa.Enum("active", "completed", "dropped", "pending", name="enrollment_status"),
+            ENROLLMENT_STATUS_ENUM,
             nullable=False,
             server_default="active",
         ),
@@ -328,7 +418,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=True),
         sa.Column(
             "difficulty",
-            sa.Enum("easy", "medium", "hard", name="difficulty_level"),
+            DIFFICULTY_LEVEL_ENUM,
             nullable=False,
             server_default="medium",
         ),
@@ -363,7 +453,7 @@ def upgrade() -> None:
         sa.Column("question_text", sa.Text, nullable=False),
         sa.Column(
             "question_type",
-            sa.Enum("mcq", "true_false", "subjective", name="question_type"),
+            QUESTION_TYPE_ENUM,
             nullable=False,
         ),
         sa.Column("options", postgresql.JSON, nullable=True),
@@ -769,13 +859,5 @@ def downgrade() -> None:
     op.drop_table("email_verifications")
     op.drop_table("users")
 
-    bind = op.get_bind()
-    is_postgresql = bind.dialect.name == "postgresql"
-    if is_postgresql:
-        op.execute("DROP TYPE IF EXISTS difficulty_level")
-        op.execute("DROP TYPE IF EXISTS question_type")
-        op.execute("DROP TYPE IF EXISTS enrollment_status")
-        op.execute("DROP TYPE IF EXISTS file_type")
-        op.execute("DROP TYPE IF EXISTS course_status")
-        op.execute("DROP TYPE IF EXISTS course_level")
-        op.execute("DROP TYPE IF EXISTS user_role")
+    # Enum types are intentionally retained. Some may have existed before this
+    # revision and are shared PostgreSQL objects; downgrade must not drop them.

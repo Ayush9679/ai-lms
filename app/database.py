@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import get_settings
+from app.core.database_ssl import create_database_ssl_context
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +32,9 @@ if not is_sqlite:
         }
     )
     if settings.DATABASE_SSL:
-        engine_kwargs["connect_args"] = {"ssl": True}
+        engine_kwargs["connect_args"] = {
+            "ssl": create_database_ssl_context(settings.DATABASE_SSL_CA_FILE)
+        }
 
 engine = create_async_engine(
     settings.DATABASE_URL,

@@ -97,7 +97,8 @@ These credentials are for a disposable demo database only. Do not use them for r
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | No | Access token lifetime (default 60) |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | No | Refresh token lifetime (default 7) |
 | `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` | No | Async PostgreSQL pool sizing |
-| `DATABASE_SSL` | No | Enable TLS for PostgreSQL connections (default `false`) |
+| `DATABASE_SSL` | No | Enable verified TLS for PostgreSQL connections (default `false`) |
+| `DATABASE_SSL_CA_FILE` | Supabase TLS | Path to the Supabase root CA certificate downloaded from Database Settings; certificate and hostname verification remain enabled |
 | `CORS_ORIGINS` | No | JSON array of explicit browser origins; wildcard is rejected |
 | `UPLOAD_DIR` | No | Local upload directory (default `./uploads`) |
 | `MAX_UPLOAD_SIZE_MB` | No | Maximum upload size (default 50 MB) |

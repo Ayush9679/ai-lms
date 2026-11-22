@@ -9,6 +9,8 @@ from typing import Any
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.database_url import normalize_async_database_url
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -33,6 +35,12 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = Field(default=10, ge=1)
     DATABASE_MAX_OVERFLOW: int = Field(default=20, ge=0)
     DATABASE_SSL: bool = False
+    DATABASE_SSL_CA_FILE: str | None = None
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        return normalize_async_database_url(value)
 
     # =========================================================================
     # Security

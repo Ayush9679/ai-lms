@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 # Import settings and all models (required for Alembic to detect them)
 from app.core.config import get_settings
+from app.core.database_ssl import create_database_ssl_context
 from app.database import Base
 import app.models  # noqa: F401 — ensures all models are registered
 
@@ -22,7 +23,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set the SQLAlchemy URL from settings (overrides alembic.ini if set)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
@@ -53,10 +54,12 @@ def do_run_migrations(connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations using async engine."""
-    connectable = create_async_engine(
-        settings.DATABASE_URL,
-        poolclass=pool.NullPool,
-    )
+    engine_options = {"poolclass": pool.NullPool}
+    if settings.DATABASE_SSL:
+        engine_options["connect_args"] = {
+            "ssl": create_database_ssl_context(settings.DATABASE_SSL_CA_FILE)
+        }
+    connectable = create_async_engine(settings.DATABASE_URL, **engine_options)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
