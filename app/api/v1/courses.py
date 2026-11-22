@@ -1,6 +1,7 @@
 """
 AI-LMS Courses Router — course CRUD, search, thumbnail upload, and file management.
 """
+
 import uuid
 from typing import Annotated
 
@@ -8,7 +9,9 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_admin, require_teacher
+from app.core.exceptions import NotFoundError
+from app.dependencies.auth import get_current_user, get_optional_user, require_teacher
+from app.models.course import CourseStatus
 from app.models.user import User, UserRole
 from app.repositories.course_repo import CourseFileRepository
 from app.schemas.common import MessageResponse, PaginatedResponse
@@ -64,7 +67,7 @@ async def create_course(
     "/",
     response_model=PaginatedResponse[CourseSummary],
     summary="List / search published courses",
-    description="Public endpoint. Supports full-text search, category/level filtering, pagination, and sorting.",
+    description="Public endpoint for published courses with text search, category/level filtering, pagination, and sorting.",
 )
 async def list_courses(
     q: str | None = Query(default=None, description="Search query"),
@@ -82,7 +85,7 @@ async def list_courses(
         query=q,
         category=category,
         level=level,
-        status=None,
+        status=CourseStatus.published,
         skip=skip,
         limit=page_size,
         sort_by=sort_by,
@@ -118,9 +121,15 @@ async def get_my_courses(
 async def get_course(
     course_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User | None, Depends(get_optional_user)],
 ) -> CourseResponse:
     svc = CourseService(db)
     course = await svc.get_course(course_id)
+    if course.status != CourseStatus.published and (
+        current_user is None
+        or (current_user.role != UserRole.admin and course.instructor_id != current_user.id)
+    ):
+        raise NotFoundError("Course", str(course_id))
     total_lessons = await svc.get_total_lessons(course_id)
     total_students = await svc.get_total_students(course_id)
     return CourseResponse(
@@ -156,9 +165,7 @@ async def update_course(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CourseSummary:
     svc = CourseService(db)
-    course = await svc.update_course(
-        course_id, current_user.id, current_user.role, request
-    )
+    course = await svc.update_course(course_id, current_user.id, current_user.role, request)
     return _course_to_summary(course)
 
 
@@ -192,12 +199,12 @@ async def upload_thumbnail(
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> CourseSummary:
     svc = CourseService(db)
-    course = await svc.get_course(course_id)
+    course = await svc.get_manageable_course(course_id, current_user.id, current_user.role)
 
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.save_image(file)
     full_url = file_svc.get_full_path(file_path)
-    course = await svc.set_thumbnail(course, full_url)
+    course = await svc.set_thumbnail(course, current_user.id, current_user.role, full_url)
     return _course_to_summary(course)
 
 
@@ -215,6 +222,8 @@ async def upload_course_file(
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> CourseFileResponse:
+    svc = CourseService(db)
+    await svc.get_manageable_course(course_id, current_user.id, current_user.role)
     file_svc = FileService()
     file_name, file_path, size, file_type, mime_type = await file_svc.save_any(file)
     full_url = file_svc.get_full_path(file_path)
@@ -241,7 +250,14 @@ async def upload_course_file(
 async def list_course_files(
     course_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User | None, Depends(get_optional_user)],
 ) -> list[CourseFileResponse]:
+    course = await CourseService(db).get_course(course_id)
+    if course.status != CourseStatus.published and (
+        current_user is None
+        or (current_user.role != UserRole.admin and course.instructor_id != current_user.id)
+    ):
+        raise NotFoundError("Course", str(course_id))
     repo = CourseFileRepository(db)
     files = await repo.get_by_course(course_id)
     return [CourseFileResponse.model_validate(f) for f in files]

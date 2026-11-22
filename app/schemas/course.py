@@ -1,10 +1,11 @@
 """
 AI-LMS Course Schemas — course CRUD, file attachments, and search.
 """
+
 import uuid
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from app.models.course import CourseLevel, CourseStatus, FileType
 from app.schemas.common import BaseSchema
@@ -13,15 +14,19 @@ from app.schemas.user import UserSummary
 
 class CreateCourseRequest(BaseSchema):
     """Teacher creates a new course."""
+
     title: str = Field(min_length=3, max_length=500, examples=["Introduction to Python"])
     description: str | None = Field(default=None, max_length=10000)
     category: str | None = Field(default=None, max_length=100, examples=["Programming"])
     level: CourseLevel = Field(default=CourseLevel.beginner)
-    tags: str | None = Field(default=None, max_length=1000, examples=["python,beginner,programming"])
+    tags: str | None = Field(
+        default=None, max_length=1000, examples=["python,beginner,programming"]
+    )
 
 
 class UpdateCourseRequest(BaseSchema):
     """Teacher updates an existing course."""
+
     title: str | None = Field(default=None, min_length=3, max_length=500)
     description: str | None = Field(default=None, max_length=10000)
     category: str | None = Field(default=None, max_length=100)
@@ -32,6 +37,7 @@ class UpdateCourseRequest(BaseSchema):
 
 class CourseFileResponse(BaseSchema):
     """A file attached to a course."""
+
     id: uuid.UUID
     file_name: str
     original_name: str
@@ -44,6 +50,7 @@ class CourseFileResponse(BaseSchema):
 
 class CourseResponse(BaseSchema):
     """Full course details."""
+
     id: uuid.UUID
     title: str
     slug: str
@@ -64,6 +71,7 @@ class CourseResponse(BaseSchema):
 
 class CourseSummary(BaseSchema):
     """Compact course info for lists and search results."""
+
     id: uuid.UUID
     title: str
     slug: str
@@ -81,6 +89,7 @@ class CourseSummary(BaseSchema):
 
 class CourseSearchParams(BaseSchema):
     """Validated query parameters for course search."""
+
     q: str | None = Field(default=None, description="Search query")
     category: str | None = None
     level: CourseLevel | None = None

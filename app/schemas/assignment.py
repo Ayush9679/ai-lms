@@ -1,6 +1,7 @@
 """
 AI-LMS Assignment Schemas — assignment CRUD, submissions, and grading.
 """
+
 import uuid
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from app.schemas.user import UserSummary
 
 class CreateAssignmentRequest(BaseSchema):
     """Teacher creates an assignment."""
+
     title: str = Field(min_length=3, max_length=500)
     description: str | None = None
     instructions: str | None = Field(default=None, max_length=10000)
@@ -22,6 +24,7 @@ class CreateAssignmentRequest(BaseSchema):
 
 class UpdateAssignmentRequest(BaseSchema):
     """Teacher updates an assignment."""
+
     title: str | None = Field(default=None, min_length=3, max_length=500)
     description: str | None = None
     instructions: str | None = None
@@ -32,6 +35,7 @@ class UpdateAssignmentRequest(BaseSchema):
 
 class AssignmentResponse(BaseSchema):
     """Full assignment details."""
+
     id: uuid.UUID
     course_id: uuid.UUID
     created_by: uuid.UUID
@@ -48,17 +52,20 @@ class AssignmentResponse(BaseSchema):
 
 class SubmitAssignmentRequest(BaseSchema):
     """Student submits a text response (file upload handled separately via /files endpoint)."""
+
     text_content: str | None = Field(default=None, max_length=50000)
 
 
 class GradeSubmissionRequest(BaseSchema):
     """Teacher grades a student's submission."""
+
     marks_obtained: float = Field(ge=0.0)
     feedback: str | None = Field(default=None, max_length=5000)
 
 
 class SubmissionResponse(BaseSchema):
     """Assignment submission details."""
+
     id: uuid.UUID
     assignment_id: uuid.UUID
     student_id: uuid.UUID
@@ -75,4 +82,5 @@ class SubmissionResponse(BaseSchema):
 
 class SubmissionWithStudent(SubmissionResponse):
     """Submission with embedded student info (for teacher grading view)."""
+
     student: UserSummary

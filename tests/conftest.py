@@ -1,14 +1,14 @@
 """
 AI-LMS Test Configuration — pytest fixtures for async testing.
 """
-import asyncio
+
 import uuid
 from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.security import hash_password
 from app.database import Base, get_db
@@ -16,15 +16,7 @@ from app.main import app
 from app.models.user import User, UserRole
 
 # Use an in-memory SQLite for testing (override with TEST_DATABASE_URL if needed)
-TEST_DB_URL = "sqlite+aiosqlite:///./test_ailms.db"
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -33,6 +25,7 @@ async def test_engine():
     # Use aiosqlite for tests
     try:
         from sqlalchemy.ext.asyncio import create_async_engine as cae
+
         engine = cae(TEST_DB_URL, echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -72,9 +65,7 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_db] = override_get_db
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://testserver"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
         yield ac
 
     app.dependency_overrides.clear()

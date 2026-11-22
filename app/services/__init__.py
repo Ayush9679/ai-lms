@@ -1,4 +1,5 @@
 """AI-LMS services package."""
+
 from app.services.assignment_service import AssignmentService
 from app.services.auth_service import AuthService
 from app.services.course_service import CourseService

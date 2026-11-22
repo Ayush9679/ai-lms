@@ -2,6 +2,9 @@
 AI-LMS AI Feature Tests — chat, notes, summaries, flashcards, study plans.
 Tests gracefully skip if Gemini is not configured.
 """
+
+import os
+
 import pytest
 from httpx import AsyncClient
 
@@ -11,12 +14,37 @@ settings = get_settings()
 AI_AVAILABLE = bool(
     settings.GEMINI_API_KEY
     and not settings.GEMINI_API_KEY.startswith("your-")
+    and os.getenv("RUN_LIVE_AI_TESTS", "").lower() == "true"
 )
 
 skip_if_no_ai = pytest.mark.skipif(
     not AI_AVAILABLE,
-    reason="GEMINI_API_KEY not configured — AI tests skipped",
+    reason="Set RUN_LIVE_AI_TESTS=true to opt into Gemini network tests",
 )
+
+
+@pytest.mark.asyncio
+async def test_ai_recommendations_endpoint(client: AsyncClient, monkeypatch):
+    """Recommendation API returns its declared response shape without calling Gemini."""
+    token = await _register_and_login(client, "recommendations@test.com", "RecsPass123!")
+
+    async def fake_recommendations(self, user_id, course_id=None):
+        return {
+            "next_lessons": [{"title": "Functions", "reason": "Build on variables"}],
+            "weak_topics": ["Loops"],
+            "practice_suggestions": ["Complete one exercise"],
+            "recommended_courses": [],
+            "message": "Keep practicing.",
+        }
+
+    monkeypatch.setattr("app.api.v1.ai.AIService.get_recommendations", fake_recommendations)
+    response = await client.get(
+        "/api/v1/ai/recommendations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["weak_topics"] == ["Loops"]
 
 
 async def _register_and_login(client, email, password):
@@ -190,7 +218,11 @@ async def test_ai_endpoints_require_auth(client: AsyncClient):
         ("POST", "/api/v1/ai/chat", {"message": "test"}),
         ("POST", "/api/v1/ai/notes/generate", {"source_type": "text", "source_text": "test"}),
         ("POST", "/api/v1/ai/summarize", {"source_type": "text", "source_text": "test"}),
-        ("POST", "/api/v1/ai/flashcards/generate", {"source_type": "text", "source_text": "test", "num_cards": 5}),
+        (
+            "POST",
+            "/api/v1/ai/flashcards/generate",
+            {"source_type": "text", "source_text": "test", "num_cards": 5},
+        ),
         ("GET", "/api/v1/ai/chat/sessions", None),
         ("GET", "/api/v1/ai/recommendations", None),
     ]

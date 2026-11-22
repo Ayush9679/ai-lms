@@ -2,6 +2,7 @@
 AI-LMS AI Service — all AI-powered features using Gemini.
 Features: tutor chat, notes, summarization, quiz generation, flashcards, study planner, recommendations.
 """
+
 import json
 import uuid
 from typing import Any
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.gemini_client import chat_with_history, generate_content
 from app.core.exceptions import AIServiceError, NotFoundError
 from app.core.logging import get_logger
-from app.models.ai_chat import AIChatMessage, AIChatSession, FlashcardSet, GeneratedNote, StudyPlan
+from app.models.ai_chat import AIChatSession, FlashcardSet, GeneratedNote, StudyPlan
 from app.models.quiz import DifficultyLevel, QuestionType
 from app.repositories.ai_repo import (
     ChatMessageRepository,
@@ -116,10 +117,7 @@ class AIService:
 
         # Build context for Gemini
         existing_messages = await self.message_repo.get_by_session(session.id)
-        history = [
-            {"role": msg.role, "parts": [msg.content]}
-            for msg in existing_messages
-        ]
+        history = [{"role": msg.role, "parts": [msg.content]} for msg in existing_messages]
 
         # Add course context to system instruction
         system = AI_TUTOR_SYSTEM
@@ -161,9 +159,7 @@ class AIService:
     ) -> list[AIChatSession]:
         return await self.session_repo.get_by_user(user_id, skip, limit)
 
-    async def get_chat_history(
-        self, user_id: uuid.UUID, session_id: uuid.UUID
-    ) -> dict[str, Any]:
+    async def get_chat_history(self, user_id: uuid.UUID, session_id: uuid.UUID) -> dict[str, Any]:
         session = await self.session_repo.get_by_id(session_id)
         if not session or session.user_id != user_id:
             raise NotFoundError("Chat session", str(session_id))
@@ -198,9 +194,7 @@ class AIService:
         title: str | None = None,
     ) -> GeneratedNote:
         """Generate structured notes from a lesson or raw text."""
-        content_to_process = await self._resolve_source_content(
-            source_type, source_id, source_text
-        )
+        content_to_process = await self._resolve_source_content(source_type, source_id, source_text)
         if not title:
             title = await self._generate_title(content_to_process[:500])
 
@@ -256,7 +250,11 @@ Include:
         """Summarize content and return key points."""
         content = await self._resolve_source_content(source_type, source_id, source_text)
 
-        length_map = {"short": "2-3 sentences", "medium": "1-2 paragraphs", "long": "3-4 paragraphs"}
+        length_map = {
+            "short": "2-3 sentences",
+            "medium": "1-2 paragraphs",
+            "long": "3-4 paragraphs",
+        }
         length_instruction = length_map.get(length, "1-2 paragraphs")
 
         prompt = f"""Summarize the following educational content in {length_instruction}.
@@ -314,7 +312,9 @@ Content to base questions on:
 Return ONLY valid JSON matching this schema:
 {{"questions": [{{"question_text": "...", "question_type": "mcq|true_false|subjective", "options": [{{"text": "...", "is_correct": bool}}]|null, "correct_answer": "..."|null, "explanation": "...", "marks": 1.0}}]}}"""
 
-        raw = await generate_content(prompt, system_instruction=QUIZ_GENERATOR_SYSTEM, temperature=0.5)
+        raw = await generate_content(
+            prompt, system_instruction=QUIZ_GENERATOR_SYSTEM, temperature=0.5
+        )
         try:
             cleaned = _extract_json(raw)
             data = json.loads(cleaned)
@@ -402,7 +402,7 @@ Content:
             course = await self.course_repo.get_by_id(course_id)
             if course:
                 lessons = await self.lesson_repo.get_by_course(course_id)
-                lesson_titles = [l.title for l in lessons]
+                lesson_titles = [lesson.title for lesson in lessons]
                 context_parts.append(
                     f"Course: {course.title}\n"
                     f"Description: {course.description or 'N/A'}\n"
@@ -423,7 +423,9 @@ Student available: {hours_per_day} hours/day.
 Return ONLY valid JSON:
 {{"title": "...", "overview": "...", "weeks": [{{"week": 1, "theme": "...", "daily_tasks": [{{"day": "Monday", "tasks": ["..."], "hours": 2.0}}]}}], "tips": ["..."]}}"""
 
-        raw = await generate_content(prompt, system_instruction=STUDY_PLANNER_SYSTEM, temperature=0.6)
+        raw = await generate_content(
+            prompt, system_instruction=STUDY_PLANNER_SYSTEM, temperature=0.6
+        )
         try:
             cleaned = _extract_json(raw)
             plan_data = json.loads(cleaned)
@@ -462,7 +464,7 @@ Return ONLY valid JSON:
                 lessons = await self.lesson_repo.get_published_by_course(course_id)
                 context_parts.append(
                     f"Current course: {course.title}\n"
-                    f"Available lessons: {', '.join(l.title for l in lessons[:10])}"
+                    f"Available lessons: {', '.join(lesson.title for lesson in lessons[:10])}"
                 )
 
         prompt = f"""Based on student progress, provide learning recommendations.
@@ -534,7 +536,7 @@ Return ONLY valid JSON:
         try:
             prompt = f"Generate a short (5-8 word) descriptive title for: {content_snippet}"
             title = await generate_content(prompt, temperature=0.8)
-            return f"{prefix}{title.strip().strip('\"')}"
+            return f"{prefix}{title.strip().strip('"')}"
         except Exception:
             return f"{prefix}Generated Content"
 

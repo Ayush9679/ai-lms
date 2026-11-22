@@ -1,6 +1,7 @@
 """
 AI-LMS Base Repository — generic CRUD operations for SQLAlchemy 2.0 async.
 """
+
 import uuid
 from typing import Any, Generic, TypeVar
 
@@ -53,9 +54,7 @@ class BaseRepository(Generic[ModelT]):
 
     async def count(self, filters: list[Any] | None = None) -> int:
         """Count records with optional filters, excluding soft-deleted."""
-        query = select(func.count()).select_from(self.model).where(
-            self.model.deleted_at.is_(None)
-        )
+        query = select(func.count()).select_from(self.model).where(self.model.deleted_at.is_(None))
         if filters:
             query = query.where(*filters)
         result = await self.db.execute(query)

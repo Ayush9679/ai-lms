@@ -1,6 +1,7 @@
 """
 AI-LMS Enrollments Router — student enrollment management.
 """
+
 import uuid
 from typing import Annotated
 
@@ -8,10 +9,15 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_teacher
+from app.dependencies.auth import get_current_user, require_student, require_teacher
 from app.models.user import User
-from app.schemas.common import MessageResponse, PaginatedResponse
-from app.schemas.enrollment import EnrollmentResponse, EnrollmentWithCourse, EnrollmentWithStudent, EnrollRequest
+from app.schemas.common import MessageResponse
+from app.schemas.enrollment import (
+    EnrollmentResponse,
+    EnrollmentWithCourse,
+    EnrollmentWithStudent,
+    EnrollRequest,
+)
 from app.schemas.user import UserSummary
 from app.services.enrollment_service import EnrollmentService
 
@@ -24,6 +30,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Enroll in a course (Student)",
     description="Enroll the authenticated student in a course.",
+    dependencies=[Depends(require_student)],
 )
 async def enroll(
     request: EnrollRequest,
@@ -40,6 +47,7 @@ async def enroll(
     response_model=list[EnrollmentWithCourse],
     summary="Get my enrollments (Student)",
     description="List all courses the current student is enrolled in.",
+    dependencies=[Depends(require_student)],
 )
 async def get_my_enrollments(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -53,6 +61,7 @@ async def get_my_enrollments(
     result = []
     for e in enrollments:
         from app.schemas.course import CourseSummary
+
         course_summary = None
         if e.course:
             course_summary = CourseSummary(
@@ -90,6 +99,7 @@ async def get_my_enrollments(
     "/{course_id}",
     response_model=MessageResponse,
     summary="Drop a course enrollment (Student)",
+    dependencies=[Depends(require_student)],
 )
 async def drop_enrollment(
     course_id: uuid.UUID,
@@ -116,7 +126,9 @@ async def get_course_students(
 ) -> list[EnrollmentWithStudent]:
     svc = EnrollmentService(db)
     skip = (page - 1) * page_size
-    enrollments = await svc.get_course_students(course_id, current_user.id, skip, page_size)
+    enrollments = await svc.get_course_students(
+        course_id, current_user.id, current_user.role, skip, page_size
+    )
     result = []
     for e in enrollments:
         student_summary = None

@@ -1,4 +1,5 @@
 """AI-LMS schemas package."""
+
 from app.schemas.ai import (
     AIQuizGenerationResult,
     ChatHistoryResponse,

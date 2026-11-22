@@ -118,7 +118,7 @@ apiClient.interceptors.response.use(
         isRefreshing = false;
         // Redirect to login if window context exists
         if (typeof window !== "undefined") {
-          window.location.href = "/login?expired=true";
+          window.location.replace("/login?expired=true");
         }
         return Promise.reject(refreshError);
       }

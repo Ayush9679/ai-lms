@@ -1,6 +1,7 @@
 """
 AI-LMS Users Router — profile management and admin user operations.
 """
+
 import uuid
 from typing import Annotated
 
@@ -11,7 +12,12 @@ from app.database import get_db
 from app.dependencies.auth import get_current_user, require_admin
 from app.models.user import User, UserRole
 from app.schemas.common import MessageResponse, PaginatedResponse
-from app.schemas.user import AdminUpdateUserRequest, UpdateProfileRequest, UserListResponse, UserPublic
+from app.schemas.user import (
+    AdminUpdateUserRequest,
+    UpdateProfileRequest,
+    UserListResponse,
+    UserPublic,
+)
 from app.services.file_service import FileService
 from app.services.user_service import UserService
 

@@ -1,11 +1,12 @@
 """
 AI-LMS User Service — profile management and admin user operations.
 """
+
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
 from app.models.user import User, UserRole
 from app.repositories.user_repo import UserRepository
@@ -24,9 +25,7 @@ class UserService:
             raise NotFoundError("User", str(user_id))
         return user
 
-    async def update_profile(
-        self, user: User, request: UpdateProfileRequest
-    ) -> User:
+    async def update_profile(self, user: User, request: UpdateProfileRequest) -> User:
         """Student/Teacher updates their own profile."""
         update_data = request.model_dump(exclude_unset=True, exclude_none=True)
         return await self.repo.update(user, **update_data)

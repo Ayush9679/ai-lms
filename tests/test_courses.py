@@ -1,6 +1,7 @@
 """
 AI-LMS Course Tests — CRUD, search, and RBAC enforcement.
 """
+
 import pytest
 from httpx import AsyncClient
 
@@ -10,18 +11,14 @@ async def _register_and_login(client, email, password, role="teacher"):
         "/api/v1/auth/register",
         json={"full_name": "Test User", "email": email, "password": password, "role": role},
     )
-    r = await client.post(
-        "/api/v1/auth/login", json={"email": email, "password": password}
-    )
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     return r.json()["access_token"]
 
 
 @pytest.mark.asyncio
 async def test_teacher_can_create_course(client: AsyncClient):
     """Teacher can create a course."""
-    token = await _register_and_login(
-        client, "teacher1@test.com", "TeachPass123!", "teacher"
-    )
+    token = await _register_and_login(client, "teacher1@test.com", "TeachPass123!", "teacher")
     response = await client.post(
         "/api/v1/courses/",
         json={
@@ -42,12 +39,46 @@ async def test_teacher_can_create_course(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_student_cannot_create_course(client: AsyncClient):
     """Student attempting to create a course gets 403."""
-    token = await _register_and_login(
-        client, "student1@test.com", "StudPass123!", "student"
-    )
+    token = await _register_and_login(client, "student1@test.com", "StudPass123!", "student")
     response = await client.post(
         "/api/v1/courses/",
         json={"title": "Hacker Course", "level": "beginner"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_teacher_cannot_upload_file_to_another_teachers_course(client: AsyncClient):
+    owner_token = await _register_and_login(
+        client, "course_owner@test.com", "OwnerPass123!", "teacher"
+    )
+    course_response = await client.post(
+        "/api/v1/courses/",
+        json={"title": "Owner Course", "level": "beginner"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    course_id = course_response.json()["id"]
+
+    other_teacher_token = await _register_and_login(
+        client, "other_teacher@test.com", "OtherPass123!", "teacher"
+    )
+    response = await client.post(
+        f"/api/v1/courses/{course_id}/files",
+        files={"file": ("notes.pdf", b"not a real pdf", "application/pdf")},
+        headers={"Authorization": f"Bearer {other_teacher_token}"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_student_cannot_access_teacher_dashboard(client: AsyncClient):
+    token = await _register_and_login(
+        client, "dashboard_student@test.com", "DashPass123!", "student"
+    )
+    response = await client.get(
+        "/api/v1/dashboard/teacher",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
@@ -80,9 +111,7 @@ async def test_search_courses(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_course_crud_flow(client: AsyncClient):
     """Full CRUD: create → get → update → delete."""
-    token = await _register_and_login(
-        client, "crud_teacher@test.com", "CrudPass123!", "teacher"
-    )
+    token = await _register_and_login(client, "crud_teacher@test.com", "CrudPass123!", "teacher")
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create
@@ -95,7 +124,9 @@ async def test_course_crud_flow(client: AsyncClient):
     course_id = create_r.json()["id"]
 
     # Get
-    get_r = await client.get(f"/api/v1/courses/{course_id}")
+    anonymous_get = await client.get(f"/api/v1/courses/{course_id}")
+    assert anonymous_get.status_code == 404
+    get_r = await client.get(f"/api/v1/courses/{course_id}", headers=headers)
     assert get_r.status_code == 200
     assert get_r.json()["id"] == course_id
 
@@ -120,9 +151,7 @@ async def test_course_crud_flow(client: AsyncClient):
 async def test_enroll_in_course(client: AsyncClient):
     """Student can enroll in a published course."""
     # Teacher creates and publishes a course
-    t_token = await _register_and_login(
-        client, "pub_teacher@test.com", "PubTeach123!", "teacher"
-    )
+    t_token = await _register_and_login(client, "pub_teacher@test.com", "PubTeach123!", "teacher")
     c_r = await client.post(
         "/api/v1/courses/",
         json={"title": "Enrollment Test Course", "level": "beginner"},
@@ -206,9 +235,7 @@ async def test_lesson_crud(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_quiz_create_and_submit(client: AsyncClient):
     """Teacher creates quiz; student submits attempt and gets graded."""
-    t_token = await _register_and_login(
-        client, "quiz_teacher@test.com", "QuizTeach123!", "teacher"
-    )
+    t_token = await _register_and_login(client, "quiz_teacher@test.com", "QuizTeach123!", "teacher")
     t_headers = {"Authorization": f"Bearer {t_token}"}
 
     # Create course
@@ -259,9 +286,7 @@ async def test_quiz_create_and_submit(client: AsyncClient):
     )
 
     # Student enrolls
-    s_token = await _register_and_login(
-        client, "quiz_student@test.com", "StudQuiz123!", "student"
-    )
+    s_token = await _register_and_login(client, "quiz_student@test.com", "StudQuiz123!", "student")
     s_headers = {"Authorization": f"Bearer {s_token}"}
     await client.post(
         "/api/v1/enrollments/",

@@ -1,6 +1,7 @@
 """
 AI-LMS Quiz Repository — database access for quizzes, questions, and attempts.
 """
+
 import uuid
 
 from sqlalchemy import func, select
@@ -24,8 +25,7 @@ class QuizRepository(BaseRepository[Quiz]):
 
     async def get_by_lesson(self, lesson_id: uuid.UUID) -> list[Quiz]:
         result = await self.db.execute(
-            select(Quiz)
-            .where(Quiz.lesson_id == lesson_id, Quiz.deleted_at.is_(None))
+            select(Quiz).where(Quiz.lesson_id == lesson_id, Quiz.deleted_at.is_(None))
         )
         return list(result.scalars().all())
 
@@ -61,9 +61,7 @@ class QuizAttemptRepository(BaseRepository[QuizAttempt]):
         )
         return list(result.scalars().all())
 
-    async def count_by_student_and_quiz(
-        self, student_id: uuid.UUID, quiz_id: uuid.UUID
-    ) -> int:
+    async def count_by_student_and_quiz(self, student_id: uuid.UUID, quiz_id: uuid.UUID) -> int:
         result = await self.db.execute(
             select(func.count())
             .select_from(QuizAttempt)
@@ -92,8 +90,7 @@ class QuizAttemptRepository(BaseRepository[QuizAttempt]):
 
     async def get_average_score_for_quiz(self, quiz_id: uuid.UUID) -> float:
         result = await self.db.execute(
-            select(func.avg(QuizAttempt.percentage))
-            .where(
+            select(func.avg(QuizAttempt.percentage)).where(
                 QuizAttempt.quiz_id == quiz_id,
                 QuizAttempt.deleted_at.is_(None),
             )
@@ -108,8 +105,7 @@ class QuizAnswerRepository(BaseRepository[QuizAnswer]):
 
     async def get_by_attempt(self, attempt_id: uuid.UUID) -> list[QuizAnswer]:
         result = await self.db.execute(
-            select(QuizAnswer)
-            .where(
+            select(QuizAnswer).where(
                 QuizAnswer.attempt_id == attempt_id,
                 QuizAnswer.deleted_at.is_(None),
             )

@@ -1,6 +1,7 @@
 """
 AI-LMS Quizzes Router — quiz CRUD, AI generation, and attempt submission.
 """
+
 import uuid
 from typing import Annotated
 
@@ -8,9 +9,8 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_teacher
+from app.dependencies.auth import get_current_user, require_student, require_teacher
 from app.models.user import User
-from app.repositories.quiz_repo import QuizAnswerRepository
 from app.schemas.common import MessageResponse
 from app.schemas.quiz import (
     CreateQuizRequest,
@@ -21,7 +21,6 @@ from app.schemas.quiz import (
     QuizResponse,
     QuizSummary,
     QuestionResponse,
-    QuestionWithAnswer,
     SubmitAttemptRequest,
     UpdateQuizRequest,
 )
@@ -181,6 +180,7 @@ async def delete_quiz(
     status_code=status.HTTP_201_CREATED,
     summary="Submit a quiz attempt (Student)",
     description="Submit answers and get instant grading with score breakdown.",
+    dependencies=[Depends(require_student)],
 )
 async def submit_attempt(
     quiz_id: uuid.UUID,
@@ -224,6 +224,7 @@ async def submit_attempt(
     "/quizzes/{quiz_id}/my-attempts",
     response_model=list[QuizAttemptSummary],
     summary="Get my attempt history for a quiz",
+    dependencies=[Depends(require_student)],
 )
 async def get_my_attempts(
     quiz_id: uuid.UUID,
@@ -252,6 +253,7 @@ async def get_my_attempts(
     "/quizzes/students/quiz-history",
     response_model=list[QuizAttemptSummary],
     summary="Get all quiz attempts for current student",
+    dependencies=[Depends(require_student)],
 )
 async def get_student_quiz_history(
     current_user: Annotated[User, Depends(get_current_user)],

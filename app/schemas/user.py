@@ -1,6 +1,7 @@
 """
 AI-LMS User Schemas — user profile read/update/list models.
 """
+
 import uuid
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from app.schemas.common import BaseSchema
 
 class UserPublic(BaseSchema):
     """Public-facing user profile (safe to return in any context)."""
+
     id: uuid.UUID
     full_name: str
     email: EmailStr
@@ -25,6 +27,7 @@ class UserPublic(BaseSchema):
 
 class UserSummary(BaseSchema):
     """Compact user info for embedding in related objects."""
+
     id: uuid.UUID
     full_name: str
     email: EmailStr
@@ -34,12 +37,14 @@ class UserSummary(BaseSchema):
 
 class UpdateProfileRequest(BaseSchema):
     """Request to update the authenticated user's profile."""
+
     full_name: str | None = Field(default=None, min_length=2, max_length=255)
     bio: str | None = Field(default=None, max_length=2000)
 
 
 class AdminUpdateUserRequest(BaseSchema):
     """Admin-only: update any user's role or active status."""
+
     role: UserRole | None = None
     is_active: bool | None = None
     is_verified: bool | None = None
@@ -47,6 +52,7 @@ class AdminUpdateUserRequest(BaseSchema):
 
 class UserListResponse(BaseSchema):
     """List of users for admin panel."""
+
     id: uuid.UUID
     full_name: str
     email: EmailStr

@@ -1,6 +1,7 @@
 """
 AI-LMS Assignment Repository — database access for assignments and submissions.
 """
+
 import uuid
 
 from sqlalchemy import func, select

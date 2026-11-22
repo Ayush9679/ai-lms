@@ -1,6 +1,7 @@
 """
 AI-LMS Rate Limiting Middleware using SlowAPI.
 """
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 

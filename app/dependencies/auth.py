@@ -1,6 +1,7 @@
 """
 AI-LMS Auth Dependencies — JWT extraction, user resolution, role guards.
 """
+
 from typing import Annotated
 
 from fastapi import Depends, Security
@@ -18,19 +19,15 @@ logger = get_logger(__name__)
 security_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Security(security_scheme)
-    ],
+async def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Security(security_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
+) -> User | None:
     """
-    Extract and validate JWT bearer token.
-    Resolves to the authenticated User from the database.
-    Raises UnauthorizedError if token is missing, expired, or invalid.
+    Resolve an optional bearer token for routes that expose published content publicly.
     """
     if not credentials or not credentials.credentials:
-        raise UnauthorizedError("Bearer token required")
+        return None
 
     try:
         payload = decode_access_token(credentials.credentials)
@@ -53,6 +50,15 @@ async def get_current_user(
     return user
 
 
+async def get_current_user(
+    current_user: Annotated[User | None, Depends(get_optional_user)],
+) -> User:
+    """Require a valid, active authenticated user."""
+    if current_user is None:
+        raise UnauthorizedError("Bearer token required")
+    return current_user
+
+
 async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
@@ -70,21 +76,20 @@ def require_roles(*roles: UserRole):
         async def admin_endpoint(user = Depends(require_roles(UserRole.admin))):
             ...
     """
+
     async def role_guard(
         current_user: Annotated[User, Depends(get_current_user)],
     ) -> User:
         if current_user.role not in roles:
             allowed = ", ".join(r.value for r in roles)
-            raise ForbiddenError(
-                f"This endpoint requires one of these roles: [{allowed}]"
-            )
+            raise ForbiddenError(f"This endpoint requires one of these roles: [{allowed}]")
         return current_user
 
     return role_guard
 
 
 # Pre-built role guards for convenience
-require_student = require_roles(UserRole.student, UserRole.teacher, UserRole.admin)
+require_student = require_roles(UserRole.student)
 require_teacher = require_roles(UserRole.teacher, UserRole.admin)
 require_admin = require_roles(UserRole.admin)
-require_teacher_or_student = require_roles(UserRole.student, UserRole.teacher, UserRole.admin)
+require_teacher_or_student = require_roles(UserRole.student, UserRole.teacher)

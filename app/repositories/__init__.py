@@ -1,4 +1,5 @@
 """AI-LMS repositories package."""
+
 from app.repositories.ai_repo import (
     ChatMessageRepository,
     ChatSessionRepository,

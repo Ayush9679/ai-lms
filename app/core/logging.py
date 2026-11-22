@@ -1,6 +1,7 @@
 """
 AI-LMS Structured Logging — JSON-formatted logs with request correlation.
 """
+
 import json
 import logging
 import sys
@@ -40,10 +41,27 @@ class JSONFormatter(logging.Formatter):
 
         # Include any extra fields attached to the record
         standard_attrs = {
-            "args", "created", "exc_info", "exc_text", "filename",
-            "funcName", "id", "levelname", "levelno", "lineno", "message",
-            "module", "msecs", "msg", "name", "pathname", "process",
-            "processName", "relativeCreated", "stack_info", "thread",
+            "args",
+            "created",
+            "exc_info",
+            "exc_text",
+            "filename",
+            "funcName",
+            "id",
+            "levelname",
+            "levelno",
+            "lineno",
+            "message",
+            "module",
+            "msecs",
+            "msg",
+            "name",
+            "pathname",
+            "process",
+            "processName",
+            "relativeCreated",
+            "stack_info",
+            "thread",
             "threadName",
         }
         for key, value in record.__dict__.items():

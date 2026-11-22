@@ -2,7 +2,7 @@
 AI-LMS File Service — secure file upload, validation, and storage.
 Validates MIME type, enforces size limits, generates unique filenames.
 """
-import os
+
 import uuid
 from pathlib import Path
 

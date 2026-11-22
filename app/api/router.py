@@ -1,6 +1,7 @@
 """
 AI-LMS Master API Router — aggregates all v1 routers.
 """
+
 from fastapi import APIRouter
 
 from app.api.v1 import (

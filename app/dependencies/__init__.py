@@ -1,4 +1,5 @@
 """AI-LMS dependencies package."""
+
 from app.dependencies.auth import (
     get_current_active_user,
     get_current_user,

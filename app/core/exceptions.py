@@ -1,6 +1,7 @@
 """
 AI-LMS Custom Exceptions and FastAPI Exception Handlers.
 """
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -13,6 +14,7 @@ logger = get_logger(__name__)
 # =============================================================================
 # Domain Exceptions
 # =============================================================================
+
 
 class AILMSException(Exception):
     """Base exception for all AI-LMS domain errors."""
@@ -98,6 +100,7 @@ class AlreadyEnrolledError(ConflictError):
 # =============================================================================
 # Exception Handlers
 # =============================================================================
+
 
 def _error_response(status_code: int, message: str, detail: object = None) -> JSONResponse:
     content: dict = {"error": True, "message": message}

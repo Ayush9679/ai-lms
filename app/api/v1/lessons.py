@@ -1,6 +1,7 @@
 """
 AI-LMS Lessons Router — lesson CRUD, file upload, and progress tracking.
 """
+
 import uuid
 from typing import Annotated
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_teacher
+from app.dependencies.auth import get_current_user, require_student, require_teacher
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.lesson import (
@@ -58,15 +59,15 @@ async def list_lessons(
     lessons = await svc.get_course_lessons(course_id, current_user.id, current_user.role)
     return [
         LessonSummary(
-            id=l.id,
-            title=l.title,
-            duration_minutes=l.duration_minutes,
-            order_index=l.order_index,
-            is_published=l.is_published,
-            has_video=bool(l.video_url),
-            has_pdf=bool(l.pdf_url),
+            id=lesson.id,
+            title=lesson.title,
+            duration_minutes=lesson.duration_minutes,
+            order_index=lesson.order_index,
+            is_published=lesson.is_published,
+            has_video=bool(lesson.video_url),
+            has_pdf=bool(lesson.pdf_url),
         )
-        for l in lessons
+        for lesson in lessons
     ]
 
 
@@ -81,7 +82,7 @@ async def get_lesson(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LessonResponse:
     svc = LessonService(db)
-    lesson = await svc.get_lesson(lesson_id)
+    lesson = await svc.get_lesson_for_user(lesson_id, current_user.id, current_user.role)
     return LessonResponse.model_validate(lesson)
 
 
@@ -130,11 +131,16 @@ async def upload_lesson_video(
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> LessonResponse:
+    svc = LessonService(db)
+    await svc.get_editable_lesson(lesson_id, current_user.id, current_user.role)
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.save_video(file)
-    svc = LessonService(db)
-    lesson = await svc.get_lesson(lesson_id)
-    lesson = await svc.repo.update(lesson, video_url=file_svc.get_full_path(file_path))
+    lesson = await svc.update_lesson(
+        lesson_id,
+        current_user.id,
+        current_user.role,
+        UpdateLessonRequest(video_url=file_svc.get_full_path(file_path)),
+    )
     return LessonResponse.model_validate(lesson)
 
 
@@ -150,11 +156,16 @@ async def upload_lesson_pdf(
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> LessonResponse:
+    svc = LessonService(db)
+    await svc.get_editable_lesson(lesson_id, current_user.id, current_user.role)
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.save_document(file)
-    svc = LessonService(db)
-    lesson = await svc.get_lesson(lesson_id)
-    lesson = await svc.repo.update(lesson, pdf_url=file_svc.get_full_path(file_path))
+    lesson = await svc.update_lesson(
+        lesson_id,
+        current_user.id,
+        current_user.role,
+        UpdateLessonRequest(pdf_url=file_svc.get_full_path(file_path)),
+    )
     return LessonResponse.model_validate(lesson)
 
 
@@ -163,6 +174,7 @@ async def upload_lesson_pdf(
     response_model=LessonProgressResponse,
     summary="Update lesson progress (Student)",
     description="Track how much of the lesson a student has watched/read.",
+    dependencies=[Depends(require_student)],
 )
 async def update_progress(
     lesson_id: uuid.UUID,
@@ -179,6 +191,7 @@ async def update_progress(
     "/lessons/{lesson_id}/progress",
     response_model=LessonProgressResponse | None,
     summary="Get lesson progress for current student",
+    dependencies=[Depends(require_student)],
 )
 async def get_progress(
     lesson_id: uuid.UUID,

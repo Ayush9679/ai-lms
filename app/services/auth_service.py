@@ -1,7 +1,6 @@
 """
 AI-LMS Auth Service — registration, login, token management, password reset.
 """
-from datetime import timedelta
 
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +23,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.repositories.user_repo import UserRepository
 from app.schemas.auth import (
     LoginRequest,
@@ -37,6 +36,7 @@ logger = get_logger(__name__)
 
 def _token_response(user: User) -> TokenResponse:
     from app.core.config import get_settings
+
     settings = get_settings()
     return TokenResponse(
         access_token=create_access_token(user.id, user.role.value),
@@ -71,7 +71,7 @@ class AuthService:
         verification_token = create_email_verification_token(user.id)
         await self.user_repo.create_email_verification(user.id, verification_token)
 
-        logger.info("User registered", extra={"user_id": str(user.id), "email": user.email})
+        logger.info("User registered", extra={"user_id": str(user.id)})
         return user, verification_token
 
     async def login(self, request: LoginRequest) -> TokenResponse:
@@ -102,7 +102,7 @@ class AuthService:
     async def verify_email(self, token: str) -> User:
         """Mark user as email-verified."""
         try:
-            payload = decode_email_verification_token(token)
+            decode_email_verification_token(token)
         except JWTError:
             raise ValidationError("Invalid or expired verification token")
 
@@ -136,7 +136,7 @@ class AuthService:
     async def reset_password(self, token: str, new_password: str) -> None:
         """Complete a password reset."""
         try:
-            payload = decode_password_reset_token(token)
+            decode_password_reset_token(token)
         except JWTError:
             raise ValidationError("Invalid or expired reset token")
 
@@ -151,9 +151,7 @@ class AuthService:
         await self.user_repo.mark_password_reset_used(reset, user, hash_password(new_password))
         logger.info("Password reset completed", extra={"user_id": str(user.id)})
 
-    async def change_password(
-        self, user: User, current_password: str, new_password: str
-    ) -> None:
+    async def change_password(self, user: User, current_password: str, new_password: str) -> None:
         """Change password for authenticated user."""
         if not verify_password(current_password, user.hashed_password):
             raise UnauthorizedError("Current password is incorrect")

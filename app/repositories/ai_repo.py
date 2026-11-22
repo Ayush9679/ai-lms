@@ -1,6 +1,7 @@
 """
 AI-LMS AI Repository — database access for chat sessions, notes, study plans, flashcards.
 """
+
 import uuid
 
 from sqlalchemy import select

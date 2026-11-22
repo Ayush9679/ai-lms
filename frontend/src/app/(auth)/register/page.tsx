@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as zod from "zod";
 import { useAuth } from "@/providers/AuthProvider";
@@ -31,6 +31,7 @@ export default function RegisterPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
+    control,
     register,
     handleSubmit,
     setValue,
@@ -43,13 +44,13 @@ export default function RegisterPage() {
     },
   });
 
-  const selectedRole = watch("role");
+  const selectedRole = useWatch({ control, name: "role", defaultValue: "student" });
 
   const onSubmit = async (data: RegisterForm) => {
     setIsSubmitting(true);
     try {
       // Register
-      const regRes = await authService.register(data);
+      await authService.register(data);
       toast.success("Account created successfully!");
       
       // Auto Login
@@ -59,7 +60,7 @@ export default function RegisterPage() {
       });
       await handleLoginState(loginRes.access_token, loginRes.refresh_token);
     } catch (err: any) {
-      console.error(err);
+
       const msg = err.response?.data?.message || "Registration failed. Try a different email.";
       toast.error(msg);
     } finally {

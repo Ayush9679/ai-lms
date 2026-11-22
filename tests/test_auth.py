@@ -1,6 +1,7 @@
 """
 AI-LMS Auth Tests — registration, login, token refresh, email verification.
 """
+
 import pytest
 from httpx import AsyncClient
 

@@ -1,8 +1,8 @@
 """
 AI-LMS Course Repository — database access for courses and course files.
 """
+
 import uuid
-from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,9 +96,7 @@ class CourseRepository(BaseRepository[Course]):
         else:
             sort_col = sort_col.asc()
 
-        result = await self.db.execute(
-            base_query.order_by(sort_col).offset(skip).limit(limit)
-        )
+        result = await self.db.execute(base_query.order_by(sort_col).offset(skip).limit(limit))
         return list(result.scalars().all()), total
 
     async def count_by_instructor(self, instructor_id: uuid.UUID) -> int:

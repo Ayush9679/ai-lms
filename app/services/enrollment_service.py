@@ -1,15 +1,18 @@
 """
 AI-LMS Enrollment Service — student enrollment and progress.
 """
+
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyEnrolledError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
+from app.models.course import CourseStatus
 from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.repositories.course_repo import CourseRepository
 from app.repositories.enrollment_repo import EnrollmentRepository
+from app.models.user import UserRole
 
 logger = get_logger(__name__)
 
@@ -24,14 +27,14 @@ class EnrollmentService:
         course = await self.course_repo.get_by_id(course_id)
         if not course:
             raise NotFoundError("Course", str(course_id))
+        if course.status != CourseStatus.published:
+            raise ForbiddenError("You can only enroll in published courses")
 
         existing = await self.repo.get_by_student_and_course(student_id, course_id)
         if existing:
             if existing.status == EnrollmentStatus.dropped:
                 # Re-enroll
-                return await self.repo.update(
-                    existing, status=EnrollmentStatus.active
-                )
+                return await self.repo.update(existing, status=EnrollmentStatus.active)
             raise AlreadyEnrolledError()
 
         enrollment = await self.repo.create(
@@ -47,18 +50,14 @@ class EnrollmentService:
         )
         return enrollment
 
-    async def drop_enrollment(
-        self, student_id: uuid.UUID, course_id: uuid.UUID
-    ) -> None:
+    async def drop_enrollment(self, student_id: uuid.UUID, course_id: uuid.UUID) -> None:
         """Drop a student from a course."""
         enrollment = await self.repo.get_by_student_and_course(student_id, course_id)
         if not enrollment:
             raise NotFoundError("Enrollment")
         await self.repo.update(enrollment, status=EnrollmentStatus.dropped)
 
-    async def get_enrollment(
-        self, student_id: uuid.UUID, course_id: uuid.UUID
-    ) -> Enrollment:
+    async def get_enrollment(self, student_id: uuid.UUID, course_id: uuid.UUID) -> Enrollment:
         enrollment = await self.repo.get_by_student_and_course(student_id, course_id)
         if not enrollment:
             raise NotFoundError("Enrollment")
@@ -74,12 +73,19 @@ class EnrollmentService:
         return await self.repo.get_by_student(student_id, skip, limit)
 
     async def get_course_students(
-        self, course_id: uuid.UUID, requester_id: uuid.UUID, skip: int = 0, limit: int = 50
+        self,
+        course_id: uuid.UUID,
+        requester_id: uuid.UUID,
+        requester_role: UserRole,
+        skip: int = 0,
+        limit: int = 50,
     ) -> list[Enrollment]:
         """Get students enrolled in a course (teacher/admin only)."""
         course = await self.course_repo.get_by_id(course_id)
         if not course:
             raise NotFoundError("Course", str(course_id))
+        if requester_role != UserRole.admin and course.instructor_id != requester_id:
+            raise ForbiddenError("You can only view students in your own courses")
         return await self.repo.get_by_course(course_id, skip, limit)
 
     async def count_enrolled(self, course_id: uuid.UUID) -> int:

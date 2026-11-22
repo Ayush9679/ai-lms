@@ -1,6 +1,7 @@
 """
 AI-LMS Search Router — unified course and lesson search with filtering.
 """
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query

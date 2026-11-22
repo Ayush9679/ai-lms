@@ -1,24 +1,31 @@
 """
 AI-LMS Quiz Service — quiz CRUD, AI generation, and attempt evaluation.
 """
+
 import uuid
-from datetime import datetime, timezone
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.logging import get_logger
-from app.models.quiz import DifficultyLevel, Question, Quiz, QuizAnswer, QuizAttempt, QuestionType
+from app.models.course import CourseStatus
+from app.models.enrollment import EnrollmentStatus
+from app.models.quiz import Quiz, QuizAttempt, QuestionType
 from app.models.user import UserRole
 from app.repositories.course_repo import CourseRepository
+from app.repositories.enrollment_repo import EnrollmentRepository
 from app.repositories.quiz_repo import (
     QuestionRepository,
     QuizAnswerRepository,
     QuizAttemptRepository,
     QuizRepository,
 )
-from app.schemas.quiz import CreateQuizRequest, GenerateQuizRequest, SubmitAttemptRequest, UpdateQuizRequest
+from app.schemas.quiz import (
+    CreateQuizRequest,
+    GenerateQuizRequest,
+    SubmitAttemptRequest,
+    UpdateQuizRequest,
+)
 
 logger = get_logger(__name__)
 
@@ -30,6 +37,7 @@ class QuizService:
         self.attempt_repo = QuizAttemptRepository(db)
         self.answer_repo = QuizAnswerRepository(db)
         self.course_repo = CourseRepository(db)
+        self.enrollment_repo = EnrollmentRepository(db)
 
     async def _verify_course_access(
         self,
@@ -94,6 +102,7 @@ class QuizService:
         await self._verify_course_access(course_id, requester_id, requester_role)
 
         from app.ai.ai_service import AIService
+
         ai = AIService(self.repo.db)
         questions_data = await ai.generate_quiz_questions(
             source_type=request.source_type,
@@ -104,7 +113,10 @@ class QuizService:
             question_types=request.question_types,
         )
 
-        title = request.title or f"AI Quiz - {request.difficulty.value.title()} ({len(questions_data)} questions)"
+        title = (
+            request.title
+            or f"AI Quiz - {request.difficulty.value.title()} ({len(questions_data)} questions)"
+        )
 
         quiz = await self.repo.create(
             course_id=course_id,
@@ -173,6 +185,18 @@ class QuizService:
         """Evaluate a quiz submission and return the graded attempt."""
         quiz = await self.get_quiz(quiz_id)
 
+        course = await self.course_repo.get_by_id(quiz.course_id)
+        enrollment = await self.enrollment_repo.get_by_student_and_course(
+            student_id, quiz.course_id
+        )
+        if (
+            not course
+            or course.status != CourseStatus.published
+            or not enrollment
+            or enrollment.status not in {EnrollmentStatus.active, EnrollmentStatus.completed}
+        ):
+            raise ForbiddenError("You must be enrolled in this published course to take its quiz")
+
         # Check attempt limit
         if quiz.max_attempts > 0:
             attempt_count = await self.attempt_repo.count_by_student_and_quiz(student_id, quiz_id)
@@ -202,7 +226,11 @@ class QuizService:
 
             if question.question_type in (QuestionType.mcq, QuestionType.true_false):
                 correct_ans = question.correct_answer
-                if not correct_ans and question.question_type == QuestionType.mcq and question.options:
+                if (
+                    not correct_ans
+                    and question.question_type == QuestionType.mcq
+                    and question.options
+                ):
                     for opt in question.options:
                         if opt.get("is_correct") is True:
                             correct_ans = opt.get("text")
@@ -226,14 +254,16 @@ class QuizService:
                 is_correct = None
                 marks_awarded = 0.0
 
-            answer_records.append({
-                "question_id": question.id,
-                "correct_answer": question.correct_answer,
-                "explanation": question.explanation,
-                "given_answer": submitted.given_answer,
-                "is_correct": is_correct,
-                "marks_awarded": marks_awarded,
-            })
+            answer_records.append(
+                {
+                    "question_id": question.id,
+                    "correct_answer": question.correct_answer,
+                    "explanation": question.explanation,
+                    "given_answer": submitted.given_answer,
+                    "is_correct": is_correct,
+                    "marks_awarded": marks_awarded,
+                }
+            )
 
         score = max(0.0, score)  # No negative total
         percentage = (score / max_score * 100.0) if max_score > 0 else 0.0

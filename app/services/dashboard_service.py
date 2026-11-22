@@ -1,15 +1,14 @@
 """
 AI-LMS Dashboard Service — aggregated stats for all three dashboard types.
 """
+
 import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.assignment import AssignmentSubmission
 from app.models.course import Course, CourseStatus
 from app.models.enrollment import Enrollment, EnrollmentStatus
-from app.models.quiz import QuizAttempt
 from app.models.user import User, UserRole
 from app.repositories.assignment_repo import AssignmentRepository, SubmissionRepository
 from app.repositories.course_repo import CourseRepository
@@ -37,15 +36,15 @@ class DashboardService:
         total_enrolled = await self.enrollment_repo.count_by_student(student_id)
         completed_count = sum(1 for e in enrollments if e.status == EnrollmentStatus.completed)
         avg_progress = (
-            sum(e.progress for e in enrollments) / len(enrollments)
-            if enrollments else 0.0
+            sum(e.progress for e in enrollments) / len(enrollments) if enrollments else 0.0
         )
 
         total_quizzes_taken = len(attempts)
         passed_quizzes = sum(1 for a in attempts if a.passed)
         avg_score = (
             sum(a.percentage for a in attempts) / total_quizzes_taken
-            if total_quizzes_taken else 0.0
+            if total_quizzes_taken
+            else 0.0
         )
 
         return {
@@ -84,21 +83,23 @@ class DashboardService:
             lessons_count = len(course.lessons)
             quizzes_count = len(course.quizzes)
             enrollments_count = await self.enrollment_repo.count_by_course(course.id)
-            
+
             # calculate average progress
             avg_prog = 0.0
             if course.enrollments:
                 avg_prog = sum(e.progress for e in course.enrollments) / len(course.enrollments)
-            
-            course_list.append({
-                "id": str(course.id),
-                "title": course.title,
-                "status": course.status.value,
-                "lessons_count": lessons_count,
-                "quizzes_count": quizzes_count,
-                "enrollments_count": enrollments_count,
-                "average_progress": round(avg_prog, 1),
-            })
+
+            course_list.append(
+                {
+                    "id": str(course.id),
+                    "title": course.title,
+                    "status": course.status.value,
+                    "lessons_count": lessons_count,
+                    "quizzes_count": quizzes_count,
+                    "enrollments_count": enrollments_count,
+                    "average_progress": round(avg_prog, 1),
+                }
+            )
 
         return {
             "course_stats": {
@@ -135,9 +136,7 @@ class DashboardService:
 
         # Total enrollments
         result = await self.db.execute(
-            select(func.count())
-            .select_from(Enrollment)
-            .where(Enrollment.deleted_at.is_(None))
+            select(func.count()).select_from(Enrollment).where(Enrollment.deleted_at.is_(None))
         )
         total_enrollments = result.scalar_one()
 

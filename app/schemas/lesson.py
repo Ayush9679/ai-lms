@@ -1,6 +1,7 @@
 """
 AI-LMS Lesson Schemas — lesson CRUD and progress tracking.
 """
+
 import uuid
 from datetime import datetime
 
@@ -11,6 +12,7 @@ from app.schemas.common import BaseSchema
 
 class CreateLessonRequest(BaseSchema):
     """Teacher creates a new lesson in a course."""
+
     title: str = Field(min_length=2, max_length=500, examples=["Variables and Data Types"])
     content: str | None = Field(default=None, max_length=100000)
     video_url: str | None = Field(default=None, max_length=1000)
@@ -23,6 +25,7 @@ class CreateLessonRequest(BaseSchema):
 
 class UpdateLessonRequest(BaseSchema):
     """Teacher updates an existing lesson."""
+
     title: str | None = Field(default=None, min_length=2, max_length=500)
     content: str | None = None
     video_url: str | None = None
@@ -35,6 +38,7 @@ class UpdateLessonRequest(BaseSchema):
 
 class LessonResponse(BaseSchema):
     """Full lesson details."""
+
     id: uuid.UUID
     course_id: uuid.UUID
     title: str
@@ -51,6 +55,7 @@ class LessonResponse(BaseSchema):
 
 class LessonSummary(BaseSchema):
     """Compact lesson info for course overview."""
+
     id: uuid.UUID
     title: str
     duration_minutes: int | None
@@ -62,6 +67,7 @@ class LessonSummary(BaseSchema):
 
 class LessonProgressUpdate(BaseSchema):
     """Student updates their progress on a lesson."""
+
     watch_time_seconds: int = Field(default=0, ge=0)
     completion_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
     is_completed: bool = False
@@ -69,6 +75,7 @@ class LessonProgressUpdate(BaseSchema):
 
 class LessonProgressResponse(BaseSchema):
     """A student's progress record for a lesson."""
+
     id: uuid.UUID
     lesson_id: uuid.UUID
     user_id: uuid.UUID

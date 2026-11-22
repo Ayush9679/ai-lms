@@ -2,6 +2,7 @@
 AI-LMS Request/Response Logging Middleware.
 Logs every request with method, path, status code, and duration.
 """
+
 import time
 import uuid as uuid_lib
 

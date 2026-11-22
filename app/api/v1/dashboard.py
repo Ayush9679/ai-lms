@@ -1,13 +1,14 @@
 """
 AI-LMS Dashboard Router — role-specific dashboard data.
 """
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_admin
+from app.dependencies.auth import get_current_user, require_admin, require_student, require_teacher
 from app.models.user import User
 from app.schemas.dashboard import (
     StudentDashboardOut,
@@ -24,6 +25,7 @@ router = APIRouter()
     response_model=StudentDashboardOut,
     summary="Student dashboard data",
     description="Returns enrolled courses, progress, quiz scores, and recent activity for the current student.",
+    dependencies=[Depends(require_student)],
 )
 async def student_dashboard(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -38,6 +40,7 @@ async def student_dashboard(
     response_model=TeacherDashboardOut,
     summary="Teacher dashboard data",
     description="Returns course stats, enrolled students, and recent activity for the current teacher.",
+    dependencies=[Depends(require_teacher)],
 )
 async def teacher_dashboard(
     current_user: Annotated[User, Depends(get_current_user)],

@@ -1,6 +1,7 @@
 """
 AI-LMS Enrollment Repository — database access for enrollments.
 """
+
 import uuid
 
 from sqlalchemy import func, select

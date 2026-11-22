@@ -2,6 +2,7 @@
 AI-LMS AI Router — tutor chat, notes, summaries, flashcards, study plans, recommendations.
 All endpoints require authentication. AI endpoints have stricter rate limits.
 """
+
 import uuid
 from typing import Annotated
 
@@ -37,6 +38,7 @@ router = APIRouter()
 # =============================================================================
 # AI Tutor Chat
 # =============================================================================
+
 
 @router.post(
     "/chat",
@@ -119,6 +121,7 @@ async def delete_chat_session(
 # Notes Generation
 # =============================================================================
 
+
 @router.post(
     "/notes/generate",
     response_model=GenerateNotesResponse,
@@ -164,8 +167,12 @@ async def list_notes(
     notes = await svc.get_user_notes(current_user.id)
     return [
         GenerateNotesResponse(
-            id=n.id, title=n.title, source_type=n.source_type,
-            content=n.content, summary=n.summary, created_at=n.created_at,
+            id=n.id,
+            title=n.title,
+            source_type=n.source_type,
+            content=n.content,
+            summary=n.summary,
+            created_at=n.created_at,
         )
         for n in notes
     ]
@@ -174,6 +181,7 @@ async def list_notes(
 # =============================================================================
 # Summarization
 # =============================================================================
+
 
 @router.post(
     "/summarize",
@@ -201,6 +209,7 @@ async def summarize(
 # =============================================================================
 # Flashcards
 # =============================================================================
+
 
 @router.post(
     "/flashcards/generate",
@@ -246,9 +255,11 @@ async def list_flashcards(
     sets = await svc.get_user_flashcards(current_user.id)
     return [
         FlashcardSetResponse(
-            id=s.id, title=s.title,
+            id=s.id,
+            title=s.title,
             cards=[Flashcard(**c) for c in s.cards],
-            card_count=s.card_count, created_at=s.created_at,
+            card_count=s.card_count,
+            created_at=s.created_at,
         )
         for s in sets
     ]
@@ -257,6 +268,7 @@ async def list_flashcards(
 # =============================================================================
 # Study Planner
 # =============================================================================
+
 
 @router.post(
     "/study-plan/generate",
@@ -303,8 +315,12 @@ async def list_study_plans(
     plans = await svc.get_study_plans(current_user.id)
     return [
         StudyPlanResponse(
-            id=p.id, title=p.title, duration_weeks=p.duration_weeks,
-            plan_data=p.plan_data, is_active=p.is_active, created_at=p.created_at,
+            id=p.id,
+            title=p.title,
+            duration_weeks=p.duration_weeks,
+            plan_data=p.plan_data,
+            is_active=p.is_active,
+            created_at=p.created_at,
         )
         for p in plans
     ]
@@ -313,6 +329,7 @@ async def list_study_plans(
 # =============================================================================
 # Recommendations
 # =============================================================================
+
 
 @router.get(
     "/recommendations",

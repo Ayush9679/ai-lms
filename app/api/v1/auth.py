@@ -1,12 +1,12 @@
 """
 AI-LMS Auth Router — registration, login, token refresh, email verification, password reset.
 """
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.user import User
@@ -25,7 +25,6 @@ from app.schemas.user import UserPublic
 from app.services.auth_service import AuthService
 
 router = APIRouter()
-settings = get_settings()
 
 
 @router.post(
@@ -40,14 +39,7 @@ async def register(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserPublic:
     svc = AuthService(db)
-    user, verification_token = await svc.register(request)
-    # In production, send verification_token via email.
-    # In debug mode, we log it for testing:
-    if settings.DEBUG:
-        import logging
-        logging.getLogger("ailms.auth").info(
-            f"[DEV] Email verification token for {user.email}: {verification_token}"
-        )
+    user, _verification_token = await svc.register(request)
     return UserPublic.model_validate(user)
 
 
@@ -105,12 +97,7 @@ async def forgot_password(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     svc = AuthService(db)
-    token = await svc.forgot_password(request.email)
-    if token and settings.DEBUG:
-        import logging
-        logging.getLogger("ailms.auth").info(
-            f"[DEV] Password reset token for {request.email}: {token}"
-        )
+    await svc.forgot_password(request.email)
     return MessageResponse(message="If that email exists, a reset link has been sent.")
 
 
@@ -126,7 +113,9 @@ async def reset_password(
 ) -> MessageResponse:
     svc = AuthService(db)
     await svc.reset_password(request.token, request.new_password)
-    return MessageResponse(message="Password reset successfully. Please login with your new password.")
+    return MessageResponse(
+        message="Password reset successfully. Please login with your new password."
+    )
 
 
 @router.post(

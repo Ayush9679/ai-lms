@@ -1,6 +1,7 @@
 """
 AI-LMS Course Service — course CRUD, publishing, and thumbnail management.
 """
+
 import uuid
 from typing import Any
 
@@ -15,8 +16,6 @@ from app.repositories.course_repo import CourseRepository
 from app.repositories.enrollment_repo import EnrollmentRepository
 from app.repositories.lesson_repo import LessonRepository
 from app.schemas.course import (
-    CourseSummary,
-    CourseResponse,
     CreateCourseRequest,
     UpdateCourseRequest,
 )
@@ -55,9 +54,7 @@ class CourseService:
             "total_students": total_students,
         }
 
-    async def create_course(
-        self, instructor_id: uuid.UUID, request: CreateCourseRequest
-    ) -> Course:
+    async def create_course(self, instructor_id: uuid.UUID, request: CreateCourseRequest) -> Course:
         slug = await self._generate_unique_slug(request.title)
         course = await self.repo.create(
             title=request.title,
@@ -78,6 +75,17 @@ class CourseService:
             raise NotFoundError("Course", str(course_id))
         return course
 
+    async def get_manageable_course(
+        self,
+        course_id: uuid.UUID,
+        requester_id: uuid.UUID,
+        requester_role: UserRole,
+    ) -> Course:
+        course = await self.get_course(course_id)
+        if requester_role != UserRole.admin and course.instructor_id != requester_id:
+            raise ForbiddenError("You can only manage your own courses")
+        return course
+
     async def get_course_by_slug(self, slug: str) -> Course:
         course = await self.repo.get_by_slug(slug)
         if not course:
@@ -91,9 +99,7 @@ class CourseService:
         requester_role: UserRole,
         request: UpdateCourseRequest,
     ) -> Course:
-        course = await self.get_course(course_id)
-        if requester_role != UserRole.admin and course.instructor_id != requester_id:
-            raise ForbiddenError("You can only edit your own courses")
+        course = await self.get_manageable_course(course_id, requester_id, requester_role)
 
         update_data = request.model_dump(exclude_unset=True, exclude_none=True)
 
@@ -108,18 +114,22 @@ class CourseService:
     async def delete_course(
         self, course_id: uuid.UUID, requester_id: uuid.UUID, requester_role: UserRole
     ) -> None:
-        course = await self.get_course(course_id)
-        if requester_role != UserRole.admin and course.instructor_id != requester_id:
-            raise ForbiddenError("You can only delete your own courses")
+        course = await self.get_manageable_course(course_id, requester_id, requester_role)
         await self.repo.soft_delete(course)
         logger.info("Course deleted", extra={"course_id": str(course_id)})
 
-    async def set_thumbnail(self, course: Course, thumbnail_url: str) -> Course:
+    async def set_thumbnail(
+        self,
+        course: Course,
+        requester_id: uuid.UUID,
+        requester_role: UserRole,
+        thumbnail_url: str,
+    ) -> Course:
+        if requester_role != UserRole.admin and course.instructor_id != requester_id:
+            raise ForbiddenError("You can only manage your own courses")
         return await self.repo.update(course, thumbnail=thumbnail_url)
 
-    async def list_published_courses(
-        self, skip: int = 0, limit: int = 20
-    ) -> list[Course]:
+    async def list_published_courses(self, skip: int = 0, limit: int = 20) -> list[Course]:
         return await self.repo.get_published(skip, limit)
 
     async def list_teacher_courses(

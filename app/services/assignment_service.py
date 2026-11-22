@@ -1,6 +1,7 @@
 """
 AI-LMS Assignment Service — assignment CRUD, submission, and grading.
 """
+
 import uuid
 from datetime import datetime, timezone
 
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.assignment import Assignment, AssignmentSubmission
+from app.models.course import CourseStatus
+from app.models.enrollment import EnrollmentStatus
 from app.models.user import UserRole
 from app.repositories.assignment_repo import AssignmentRepository, SubmissionRepository
 from app.repositories.course_repo import CourseRepository
@@ -96,8 +99,7 @@ class AssignmentService:
         file_url: str | None = None,
         file_name: str | None = None,
     ) -> AssignmentSubmission:
-        assignment = await self.get_assignment(assignment_id)
-
+        await self.ensure_student_can_submit(assignment_id, student_id)
         if not request.text_content and not file_url:
             raise ValidationError("Submission must include text content or a file")
 
@@ -122,6 +124,27 @@ class AssignmentService:
         )
         return submission
 
+    async def ensure_student_can_submit(
+        self, assignment_id: uuid.UUID, student_id: uuid.UUID
+    ) -> Assignment:
+        assignment = await self.get_assignment(assignment_id)
+        course = await self.course_repo.get_by_id(assignment.course_id)
+        enrollment = await self.enrollment_repo.get_by_student_and_course(
+            student_id, assignment.course_id
+        )
+        if (
+            not course
+            or course.status != CourseStatus.published
+            or not enrollment
+            or enrollment.status
+            not in {
+                EnrollmentStatus.active,
+                EnrollmentStatus.completed,
+            }
+        ):
+            raise ForbiddenError("You must be enrolled in this course to submit work")
+        return assignment
+
     async def grade_submission(
         self,
         submission_id: uuid.UUID,
@@ -139,9 +162,7 @@ class AssignmentService:
             raise ForbiddenError("You can only grade submissions for your own assignments")
 
         if request.marks_obtained > assignment.max_marks:
-            raise ValidationError(
-                f"Marks cannot exceed max marks ({assignment.max_marks})"
-            )
+            raise ValidationError(f"Marks cannot exceed max marks ({assignment.max_marks})")
 
         return await self.submission_repo.update(
             submission,
@@ -167,9 +188,7 @@ class AssignmentService:
     async def get_student_submission(
         self, assignment_id: uuid.UUID, student_id: uuid.UUID
     ) -> AssignmentSubmission | None:
-        return await self.submission_repo.get_by_assignment_and_student(
-            assignment_id, student_id
-        )
+        return await self.submission_repo.get_by_assignment_and_student(assignment_id, student_id)
 
     async def get_student_submissions(
         self, student_id: uuid.UUID, skip: int = 0, limit: int = 20

@@ -1,6 +1,7 @@
 """
 AI-LMS Lesson Repository — database access for lessons and progress.
 """
+
 import uuid
 
 from sqlalchemy import select
@@ -38,6 +39,7 @@ class LessonRepository(BaseRepository[Lesson]):
 
     async def count_by_course(self, course_id: uuid.UUID) -> int:
         from sqlalchemy import func
+
         result = await self.db.execute(
             select(func.count())
             .select_from(Lesson)
@@ -62,11 +64,10 @@ class LessonProgressRepository(BaseRepository[LessonProgress]):
         )
         return result.scalar_one_or_none()
 
-    async def get_completed_count_for_course(
-        self, user_id: uuid.UUID, course_id: uuid.UUID
-    ) -> int:
+    async def get_completed_count_for_course(self, user_id: uuid.UUID, course_id: uuid.UUID) -> int:
         """Count completed lessons for a student in a specific course."""
         from sqlalchemy import func
+
         result = await self.db.execute(
             select(func.count())
             .select_from(LessonProgress)

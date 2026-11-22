@@ -1,6 +1,7 @@
 """
 AI-LMS Application Factory — FastAPI app with all middleware, routers, and lifespan.
 """
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,8 +16,10 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
+from app.database import engine
 from app.middleware.logging_middleware import RequestLoggingMiddleware
 from app.middleware.rate_limit import limiter
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 setup_logging()
 logger = get_logger(__name__)
@@ -41,9 +44,11 @@ async def lifespan(app: FastAPI):
     for subdir in ("image", "video", "document", "assignment", "other"):
         Path(settings.UPLOAD_DIR, subdir).mkdir(parents=True, exist_ok=True)
 
-    yield
-
-    logger.info("AI-LMS shutting down")
+    try:
+        yield
+    finally:
+        await engine.dispose()
+        logger.info("AI-LMS shutting down")
 
 
 # =============================================================================
@@ -53,30 +58,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI-LMS — AI Learning Management System",
     description="""
-## Enterprise-Grade AI Learning Management System
+Learning management API for accounts, courses, lessons, enrollments, quizzes,
+assignments, dashboards, course search, uploads, and optional Gemini-backed study
+operations. Email verification and password reset endpoints exist, but outbound
+email delivery is not configured by this application.
 
-A production-quality backend built with FastAPI, PostgreSQL, and Google Gemini AI.
-
-### Features
-- 🔐 **JWT Authentication** with refresh tokens, email verification, and password reset
-- 👥 **RBAC** with Student, Teacher, and Admin roles
-- 📚 **Course Management** with lessons, videos, PDFs, and progress tracking
-- ❓ **Quiz Engine** with MCQ, True/False, Subjective — manual and AI-generated
-- 📝 **Assignment System** with file uploads and grading
-- 🤖 **Gemini AI Integration**: Tutor chat, notes, summaries, flashcards, study plans
-- 🔍 **Search** with full-text filtering, pagination, and sorting
-- 📊 **Dashboards** for students, teachers, and admins
-- 📁 **File Uploads** with MIME validation and size limits
-- ⚡ **Rate Limiting** per IP with stricter AI endpoint limits
-
-### Authentication
-Use the **Authorize** button (🔒) to enter your Bearer token after logging in via `/api/v1/auth/login`.
-
-### Quick Start
-1. `POST /api/v1/auth/register` — Create an account
-2. `POST /api/v1/auth/login` — Get your JWT token
-3. Click **Authorize** and enter `<your_token>`
-4. Explore the API!
+Authenticate with a bearer token from `POST /api/v1/auth/login` using the Authorize
+control. Health checks are available at `/health` and `/api/v1/health`.
     """,
     version=settings.APP_VERSION,
     debug=settings.DEBUG,
@@ -92,6 +80,7 @@ Use the **Authorize** button (🔒) to enter your Bearer token after logging in 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # =============================================================================
 # CORS
@@ -100,8 +89,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     expose_headers=["X-Request-ID"],
 )
 
@@ -142,10 +131,12 @@ async def health_check() -> dict:
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
-        "docs": "/docs",
-        "redoc": "/redoc",
     }
+
+
+@app.get("/health", tags=["Health"], summary="Liveness check")
+async def liveness_check() -> dict:
+    return await health_check()
 
 
 @app.get(

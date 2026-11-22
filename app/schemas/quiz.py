@@ -1,9 +1,9 @@
 """
 AI-LMS Quiz Schemas — quiz CRUD, questions, attempts, and scoring.
 """
+
 import uuid
 from datetime import datetime
-from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -15,18 +15,21 @@ from app.schemas.common import BaseSchema
 # Question Schemas
 # =============================================================================
 
+
 class MCQOption(BaseSchema):
     """A single option in an MCQ question."""
+
     text: str = Field(min_length=1, max_length=500)
     is_correct: bool = False
 
 
 class CreateQuestionRequest(BaseSchema):
     """Create a question within a quiz."""
+
     question_text: str = Field(min_length=5, max_length=5000)
     question_type: QuestionType
     options: list[MCQOption] | None = None  # MCQ only
-    correct_answer: str | None = None       # True/False and Subjective
+    correct_answer: str | None = None  # True/False and Subjective
     explanation: str | None = None
     marks: float = Field(default=1.0, ge=0.1, le=100.0)
     order_index: int = Field(default=0, ge=0)
@@ -46,6 +49,7 @@ class CreateQuestionRequest(BaseSchema):
 
 class QuestionResponse(BaseSchema):
     """Full question details (excludes correct_answer for student-facing calls)."""
+
     id: uuid.UUID
     quiz_id: uuid.UUID
     question_text: str
@@ -58,6 +62,7 @@ class QuestionResponse(BaseSchema):
 
 class QuestionWithAnswer(QuestionResponse):
     """Question with correct answer — only for teachers/post-attempt review."""
+
     correct_answer: str | None
 
 
@@ -65,8 +70,10 @@ class QuestionWithAnswer(QuestionResponse):
 # Quiz Schemas
 # =============================================================================
 
+
 class CreateQuizRequest(BaseSchema):
     """Teacher creates a quiz manually."""
+
     title: str = Field(min_length=3, max_length=500)
     description: str | None = None
     difficulty: DifficultyLevel = DifficultyLevel.medium
@@ -80,9 +87,10 @@ class CreateQuizRequest(BaseSchema):
 
 class GenerateQuizRequest(BaseSchema):
     """AI generates a quiz from a source."""
+
     source_type: str = Field(examples=["lesson", "pdf", "course", "text"])
-    source_id: uuid.UUID | None = None        # lesson_id or course_id
-    source_text: str | None = None            # raw text input
+    source_id: uuid.UUID | None = None  # lesson_id or course_id
+    source_text: str | None = None  # raw text input
     num_questions: int = Field(default=10, ge=3, le=50)
     difficulty: DifficultyLevel = DifficultyLevel.medium
     question_types: list[QuestionType] = Field(
@@ -93,6 +101,7 @@ class GenerateQuizRequest(BaseSchema):
 
 class UpdateQuizRequest(BaseSchema):
     """Update quiz metadata."""
+
     title: str | None = Field(default=None, min_length=3, max_length=500)
     description: str | None = None
     difficulty: DifficultyLevel | None = None
@@ -104,6 +113,7 @@ class UpdateQuizRequest(BaseSchema):
 
 class QuizResponse(BaseSchema):
     """Full quiz details with questions (no correct answers for students)."""
+
     id: uuid.UUID
     course_id: uuid.UUID
     lesson_id: uuid.UUID | None
@@ -123,6 +133,7 @@ class QuizResponse(BaseSchema):
 
 class QuizSummary(BaseSchema):
     """Compact quiz info for listing."""
+
     id: uuid.UUID
     title: str
     difficulty: DifficultyLevel
@@ -137,20 +148,24 @@ class QuizSummary(BaseSchema):
 # Attempt Schemas
 # =============================================================================
 
+
 class SubmitAnswerRequest(BaseSchema):
     """A student's answer to a single question."""
+
     question_id: uuid.UUID
     given_answer: str | None = None
 
 
 class SubmitAttemptRequest(BaseSchema):
     """Student submits a completed quiz attempt."""
+
     answers: list[SubmitAnswerRequest]
     time_taken_seconds: int | None = Field(default=None, ge=0)
 
 
 class QuizAnswerResponse(BaseSchema):
     """Result of a single answer after grading."""
+
     question_id: uuid.UUID
     given_answer: str | None
     correct_answer: str | None
@@ -161,6 +176,7 @@ class QuizAnswerResponse(BaseSchema):
 
 class QuizAttemptResponse(BaseSchema):
     """Full attempt result with score breakdown."""
+
     id: uuid.UUID
     quiz_id: uuid.UUID
     student_id: uuid.UUID
@@ -176,6 +192,7 @@ class QuizAttemptResponse(BaseSchema):
 
 class QuizAttemptSummary(BaseSchema):
     """Compact attempt info for history."""
+
     id: uuid.UUID
     quiz_id: uuid.UUID
     quiz_title: str

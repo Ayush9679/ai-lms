@@ -2,10 +2,11 @@
 AI-LMS Core Configuration
 Pydantic v2 BaseSettings with full validation and computed fields.
 """
-from functools import lru_cache
-from typing import Annotated, Any
 
-from pydantic import AnyHttpUrl, Field, PostgresDsn, computed_field, field_validator
+from functools import lru_cache
+from typing import Any
+
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,19 +29,18 @@ class Settings(BaseSettings):
     # =========================================================================
     # Database
     # =========================================================================
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://ailms:ailms_secret@postgres:5432/ailms_db"
-    )
-    DATABASE_POOL_SIZE: int = 10
-    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_URL: str
+    DATABASE_POOL_SIZE: int = Field(default=10, ge=1)
+    DATABASE_MAX_OVERFLOW: int = Field(default=20, ge=0)
+    DATABASE_SSL: bool = False
 
     # =========================================================================
     # Security
     # =========================================================================
     SECRET_KEY: str = Field(min_length=32)
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ALGORITHM: str = Field(default="HS256", pattern="^HS256$")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60, ge=1, le=1440)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7, ge=1, le=90)
 
     # =========================================================================
     # CORS
@@ -52,26 +52,37 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, v: Any) -> list[str]:
         if isinstance(v, str):
             import json
+
             try:
                 return json.loads(v)
             except Exception:
                 return [origin.strip() for origin in v.split(",")]
         return v
 
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def validate_cors_origins(cls, origins: list[str]) -> list[str]:
+        if not origins or any(origin == "*" for origin in origins):
+            raise ValueError("CORS_ORIGINS must contain explicit origins and cannot use '*'")
+        return [origin.rstrip("/") for origin in origins]
+
     # =========================================================================
     # File Uploads
     # =========================================================================
-    UPLOAD_DIR: str = "/app/uploads"
-    MAX_UPLOAD_SIZE_MB: int = 50
+    UPLOAD_DIR: str = "uploads"
+    MAX_UPLOAD_SIZE_MB: int = Field(default=50, ge=1, le=1024)
     ALLOWED_IMAGE_TYPES: list[str] = ["image/jpeg", "image/png", "image/webp", "image/gif"]
     ALLOWED_VIDEO_TYPES: list[str] = ["video/mp4", "video/webm", "video/ogg"]
     ALLOWED_DOCUMENT_TYPES: list[str] = ["application/pdf"]
 
-    @field_validator("ALLOWED_IMAGE_TYPES", "ALLOWED_VIDEO_TYPES", "ALLOWED_DOCUMENT_TYPES", mode="before")
+    @field_validator(
+        "ALLOWED_IMAGE_TYPES", "ALLOWED_VIDEO_TYPES", "ALLOWED_DOCUMENT_TYPES", mode="before"
+    )
     @classmethod
     def parse_list_fields(cls, v: Any) -> list[str]:
         if isinstance(v, str):
             import json
+
             try:
                 return json.loads(v)
             except Exception:
@@ -97,8 +108,8 @@ class Settings(BaseSettings):
     # =========================================================================
     # Rate Limiting
     # =========================================================================
-    RATE_LIMIT_PER_MINUTE: int = 100
-    AI_RATE_LIMIT_PER_MINUTE: int = 10
+    RATE_LIMIT_PER_MINUTE: int = Field(default=100, ge=1)
+    AI_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1)
 
     # =========================================================================
     # Email

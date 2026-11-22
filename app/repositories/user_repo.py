@@ -1,6 +1,7 @@
 """
 AI-LMS User Repository — database access for user accounts.
 """
+
 import uuid
 
 from sqlalchemy import select

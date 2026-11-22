@@ -1,6 +1,7 @@
 """
 AI-LMS Assignments Router — assignment CRUD, submission, and grading.
 """
+
 import uuid
 from typing import Annotated
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies.auth import get_current_user, require_teacher
+from app.dependencies.auth import get_current_user, require_student, require_teacher
 from app.models.user import User
 from app.schemas.assignment import (
     AssignmentResponse,
@@ -41,9 +42,7 @@ async def create_assignment(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AssignmentResponse:
     svc = AssignmentService(db)
-    assignment = await svc.create_assignment(
-        course_id, current_user.id, current_user.role, request
-    )
+    assignment = await svc.create_assignment(course_id, current_user.id, current_user.role, request)
     return AssignmentResponse(
         id=assignment.id,
         course_id=assignment.course_id,
@@ -75,6 +74,7 @@ async def list_assignments(
     result = []
     for a in assignments:
         from app.repositories.assignment_repo import SubmissionRepository
+
         repo = SubmissionRepository(db)
         count = await repo.count_by_assignment(a.id)
         result.append(
@@ -109,12 +109,21 @@ async def get_assignment(
     svc = AssignmentService(db)
     a = await svc.get_assignment(assignment_id)
     from app.repositories.assignment_repo import SubmissionRepository
+
     count = await SubmissionRepository(db).count_by_assignment(a.id)
     return AssignmentResponse(
-        id=a.id, course_id=a.course_id, created_by=a.created_by, title=a.title,
-        description=a.description, instructions=a.instructions, due_date=a.due_date,
-        max_marks=a.max_marks, passing_marks=a.passing_marks, submission_count=count,
-        created_at=a.created_at, updated_at=a.updated_at,
+        id=a.id,
+        course_id=a.course_id,
+        created_by=a.created_by,
+        title=a.title,
+        description=a.description,
+        instructions=a.instructions,
+        due_date=a.due_date,
+        max_marks=a.max_marks,
+        passing_marks=a.passing_marks,
+        submission_count=count,
+        created_at=a.created_at,
+        updated_at=a.updated_at,
     )
 
 
@@ -133,10 +142,18 @@ async def update_assignment(
     svc = AssignmentService(db)
     a = await svc.update_assignment(assignment_id, current_user.id, current_user.role, request)
     return AssignmentResponse(
-        id=a.id, course_id=a.course_id, created_by=a.created_by, title=a.title,
-        description=a.description, instructions=a.instructions, due_date=a.due_date,
-        max_marks=a.max_marks, passing_marks=a.passing_marks, submission_count=0,
-        created_at=a.created_at, updated_at=a.updated_at,
+        id=a.id,
+        course_id=a.course_id,
+        created_by=a.created_by,
+        title=a.title,
+        description=a.description,
+        instructions=a.instructions,
+        due_date=a.due_date,
+        max_marks=a.max_marks,
+        passing_marks=a.passing_marks,
+        submission_count=0,
+        created_at=a.created_at,
+        updated_at=a.updated_at,
     )
 
 
@@ -162,6 +179,7 @@ async def delete_assignment(
     status_code=status.HTTP_201_CREATED,
     summary="Submit assignment (Student)",
     description="Submit text content. To attach a file, use the /submit-file endpoint.",
+    dependencies=[Depends(require_student)],
 )
 async def submit_assignment(
     assignment_id: uuid.UUID,
@@ -180,6 +198,7 @@ async def submit_assignment(
     status_code=status.HTTP_201_CREATED,
     summary="Submit assignment with file (Student)",
     description="Upload a file submission for an assignment (PDF or image).",
+    dependencies=[Depends(require_student)],
 )
 async def submit_assignment_file(
     assignment_id: uuid.UUID,
@@ -187,12 +206,14 @@ async def submit_assignment_file(
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> SubmissionResponse:
+    svc = AssignmentService(db)
+    await svc.ensure_student_can_submit(assignment_id, current_user.id)
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.validate_and_save(
         file, allowed_types=["application/pdf", "image/jpeg", "image/png"]
     )
-    svc = AssignmentService(db)
     from app.schemas.assignment import SubmitAssignmentRequest as SAR
+
     submission = await svc.submit_assignment(
         assignment_id,
         current_user.id,
@@ -234,11 +255,18 @@ async def get_submissions(
             )
         result.append(
             SubmissionWithStudent(
-                id=s.id, assignment_id=s.assignment_id, student_id=s.student_id,
-                file_url=s.file_url, file_name=s.file_name, text_content=s.text_content,
-                marks_obtained=s.marks_obtained, feedback=s.feedback,
-                graded_by=s.graded_by, graded_at=s.graded_at,
-                created_at=s.created_at, updated_at=s.updated_at,
+                id=s.id,
+                assignment_id=s.assignment_id,
+                student_id=s.student_id,
+                file_url=s.file_url,
+                file_name=s.file_name,
+                text_content=s.text_content,
+                marks_obtained=s.marks_obtained,
+                feedback=s.feedback,
+                graded_by=s.graded_by,
+                graded_at=s.graded_at,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
                 student=student_summary,
             )
         )
@@ -268,6 +296,7 @@ async def grade_submission(
     "/my-submissions",
     response_model=list[SubmissionResponse],
     summary="Get all my submissions (Student)",
+    dependencies=[Depends(require_student)],
 )
 async def get_my_submissions(
     current_user: Annotated[User, Depends(get_current_user)],
