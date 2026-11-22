@@ -9,16 +9,16 @@ services:
     container_name: ailms_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ailms
-      POSTGRES_PASSWORD: ailms_secret
-      POSTGRES_DB: ailms_db
+      POSTGRES_USER: ${POSTGRES_USER:-ailms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-ailms_db}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ailms -d ailms_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ailms} -d ${POSTGRES_DB:-ailms_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,7 +38,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://ailms:ailms_secret@postgres:5432/ailms_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ailms}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}@postgres:5432/${POSTGRES_DB:-ailms_db}
     ports:
       - "8000:8000"
     volumes:

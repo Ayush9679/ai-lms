@@ -12,6 +12,7 @@
 
 # Keep template env files
 !.env.example
+!.env.local.example
 
 ############################################
 # Python

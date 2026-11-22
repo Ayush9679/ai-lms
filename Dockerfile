@@ -14,8 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip wheel --no-cache-dir --no-deps --wheel-dir /build/wheels -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /build/wheels -r requirements.txt
 
 # =============================================================================
 # Runtime stage
@@ -28,7 +27,8 @@ LABEL description="AI Learning Management System"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev \
+    libpq5 \
+    libmagic1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,8 +41,7 @@ WORKDIR /app
 # Copy wheels and install
 COPY --from=builder /build/wheels /wheels
 COPY --from=builder /build/requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
     rm -rf /wheels
 
 # Copy application source
@@ -61,4 +60,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8000/ || exit 1
 
 # Start with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--loop", "asyncio"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
