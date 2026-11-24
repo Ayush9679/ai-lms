@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminCourseService } from "@/services/api";
+import { formatCoursePrice } from "@/lib/course-price";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { TableSkeleton } from "@/components/shared/SkeletonLoaders";
 import { PageTransition } from "@/components/shared/PageTransitions";
@@ -235,7 +236,7 @@ export default function AdminCoursesPage() {
                           {/* Price */}
                           <td className="py-4 px-3 text-center">
                             <span className="text-sm font-semibold text-white">
-                              {course.price === 0 ? "Free" : `$${course.price}`}
+                              {formatCoursePrice(course.price)}
                             </span>
                           </td>
 

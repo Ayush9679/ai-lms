@@ -7,6 +7,7 @@ import { courseService, lessonService, quizService, assignmentService } from "@/
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { TableSkeleton } from "@/components/shared/SkeletonLoaders";
 import { PageTransition } from "@/components/shared/PageTransitions";
+import { formatCoursePrice } from "@/lib/course-price";
 import {
   ArrowLeft,
   BookOpen,
@@ -203,6 +204,7 @@ export default function CourseDetailsManager() {
               </Link>
               <div>
                 <h1 className="text-2xl font-extrabold text-white">{course.title}</h1>
+                <p className="mt-1 text-sm font-semibold text-purple-300">{formatCoursePrice(course.price)}</p>
                 <p className="text-zinc-400 text-xs mt-0.5">Category: {course.category} • {course.level}</p>
               </div>
             </div>

@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { courseService } from "@/services/api";
+import { formatCoursePrice } from "@/lib/course-price";
+import { isAxiosError } from "axios";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { TableSkeleton } from "@/components/shared/SkeletonLoaders";
 import { PageTransition } from "@/components/shared/PageTransitions";
@@ -52,8 +54,11 @@ export default function ManageCoursesPage() {
       setPublishingId(null);
       invalidateAll();
     },
-    onError: () => {
-      toast.error("Failed to update course status.");
+    onError: (error: unknown) => {
+      const message = isAxiosError<{ message?: string }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      toast.error(message ?? "Failed to update course status.");
       setPublishingId(null);
     },
   });
@@ -229,6 +234,7 @@ export default function ManageCoursesPage() {
                             </div>
                             <div>
                               <p className="text-sm font-bold text-white leading-snug">{course.title}</p>
+                              <p className="mt-0.5 text-xs font-semibold text-purple-300">{formatCoursePrice(course.price)}</p>
                               <p className="text-[10px] text-zinc-500 mt-0.5 font-semibold uppercase">
                                 {course.category} • {course.level}
                               </p>

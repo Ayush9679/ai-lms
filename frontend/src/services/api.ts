@@ -267,8 +267,16 @@ export const enrollmentService = {
   },
 
   async getStatus(courseId: string): Promise<{ is_enrolled: boolean; status?: string; progress?: number }> {
-    const res = await apiClient.get(`/enrollments/${courseId}/status`);
-    return res.data;
+    const { data } = await apiClient.get<(
+      Pick<Enrollment, "status" | "progress"> | { is_enrolled: boolean }
+    ) | null>(`/enrollments/${courseId}/status`, { timeout: 15_000 });
+    if (!data) return { is_enrolled: false };
+    if ("is_enrolled" in data) return data;
+    return {
+      is_enrolled: data.status === "active" || data.status === "completed",
+      status: data.status,
+      progress: data.progress,
+    };
   },
 };
 
