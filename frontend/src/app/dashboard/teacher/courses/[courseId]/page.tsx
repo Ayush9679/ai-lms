@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { courseService, lessonService, quizService, assignmentService } from "@/services/api";
+import { courseService, getApiErrorMessage, lessonService, quizService, assignmentService } from "@/services/api";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { TableSkeleton } from "@/components/shared/SkeletonLoaders";
 import { PageTransition } from "@/components/shared/PageTransitions";
@@ -30,6 +30,7 @@ export default function CourseDetailsManager() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"lessons" | "quizzes" | "assignments">("lessons");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [priceDraft, setPriceDraft] = useState<string | null>(null);
 
   // Fetch Course details
   const { data: course, isLoading: courseLoading } = useQuery({
@@ -55,6 +56,9 @@ export default function CourseDetailsManager() {
     queryFn: () => assignmentService.listByCourse(courseId as string),
   });
 
+  const effectivePrice = Number(priceDraft ?? course?.price ?? 0);
+  const priceValid = Number.isFinite(effectivePrice) && effectivePrice >= 0 && Math.round(effectivePrice * 100) === effectivePrice * 100;
+
   // Mutations
   const deleteCourseMutation = useMutation({
     mutationFn: () => courseService.delete(courseId as string),
@@ -68,7 +72,7 @@ export default function CourseDetailsManager() {
   });
 
   const publishCourseMutation = useMutation({
-    mutationFn: (status: "published" | "draft") => courseService.update(courseId as string, { status }),
+    mutationFn: (status: "published" | "draft") => courseService.update(courseId as string, { status, ...(status === "published" ? { price: effectivePrice, currency: "INR" } : {}) }),
     onMutate: () => setPublishError(null),
     onSuccess: (_, newStatus) => {
       queryClient.invalidateQueries({ queryKey: ["teacherCourse", courseId] });
@@ -78,8 +82,7 @@ export default function CourseDetailsManager() {
       toast.success(newStatus === "published" ? "Course published! Students can now see it." : "Course reverted to draft.");
     },
     onError: (error: unknown) => {
-      const responseError = error as { response?: { data?: { message?: string; detail?: string } } };
-      const message = responseError.response?.data?.message ?? responseError.response?.data?.detail ?? "Could not publish course. Check the requirements and try again.";
+      const message = getApiErrorMessage(error, "Could not publish course. Check the requirements and try again.");
       setPublishError(message);
       toast.error(message);
     },
@@ -114,9 +117,9 @@ export default function CourseDetailsManager() {
       queryClient.invalidateQueries({ queryKey: ["teacherCourses"] });
       queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
       toast.success("Thumbnail uploaded successfully!");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      toast.error("Failed to upload thumbnail.");
+      toast.error(getApiErrorMessage(err, "Thumbnail upload failed. Check storage CORS and retry."));
     } finally {
       setUploadingThumbnail(false);
     }
@@ -181,9 +184,11 @@ export default function CourseDetailsManager() {
   if (!course) return null;
 
   const publishRequirements = [
-    { label: "Course title is set", complete: Boolean(course.title.trim()) },
+    { label: "Course title is valid", complete: course.title.trim().length >= 3 },
     { label: "Course cover thumbnail is uploaded", complete: Boolean(course.thumbnail) },
     { label: "At least one lesson video is ready", complete: Boolean(lessons?.some((lesson) => lesson.video_status === "ready")) },
+    { label: "INR price is valid (up to two decimal places)", complete: priceValid && (course.currency ?? "INR") === "INR" },
+    { label: "Paid checkout is enabled", complete: effectivePrice === 0 },
   ];
   const canPublish = publishRequirements.every((requirement) => requirement.complete);
 
@@ -289,6 +294,29 @@ export default function CourseDetailsManager() {
               </div>
             </div>
           </div>
+
+          <section className="glass-card rounded-2xl p-5 flex flex-col gap-3" aria-label="Course pricing">
+            <h2 className="text-base font-bold text-white">Course pricing</h2>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex min-w-40 flex-col gap-1 text-xs font-semibold text-zinc-400">Pricing model
+                <select value={effectivePrice > 0 ? "paid" : "free"} onChange={(event) => setPriceDraft(event.target.value === "free" ? "0" : "1")} className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm text-white"><option value="free">Free</option><option value="paid">Paid</option></select>
+              </label>
+              {effectivePrice > 0 && <label className="flex min-w-40 flex-col gap-1 text-xs font-semibold text-zinc-400">Price (INR)
+                <input aria-label="Price in Indian rupees" type="number" min="0.01" step="0.01" value={priceDraft ?? String(course.price)} onChange={(event) => setPriceDraft(event.target.value)} className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2.5 text-sm text-white" />
+              </label>}
+              <button onClick={async () => {
+                if (!priceValid) { toast.error("Enter a valid INR price with up to two decimal places."); return; }
+                try {
+                  const updatedCourse = await courseService.update(courseId as string, { price: effectivePrice, currency: "INR" });
+                  queryClient.setQueryData(["teacherCourse", courseId], updatedCourse);
+                  setPriceDraft(null);
+                  await queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
+                  toast.success("Course price saved.");
+                } catch (error) { toast.error(getApiErrorMessage(error, "Could not save the course price.")); }
+              }} disabled={!priceValid} className="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-white disabled:opacity-50">Save price</button>
+            </div>
+            {effectivePrice > 0 && <p className="text-xs text-amber-300">Paid checkout is unavailable. Paid courses cannot be published until checkout is enabled.</p>}
+          </section>
 
           {/* TABS SELECTOR */}
           <div className="flex border-b border-zinc-800/80 mt-4">

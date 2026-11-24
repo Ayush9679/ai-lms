@@ -2,8 +2,8 @@
 
 import React, { useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { lessonService } from "@/services/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { getApiErrorMessage, lessonService } from "@/services/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { PageTransition } from "@/components/shared/PageTransitions";
 import { ArrowLeft, Upload, File, Film, Loader2 } from "lucide-react";
@@ -18,7 +18,10 @@ export default function LessonAssetUploadPage() {
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
+  const [videoMessage, setVideoMessage] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const videoAbort = useRef<AbortController | null>(null);
+  const { data: lesson } = useQuery({ queryKey: ["lessonDetails", lessonId], queryFn: () => lessonService.getDetails(lessonId as string) });
 
   const handleVideoUpload = async () => {
     if (!videoFile) return;
@@ -28,17 +31,27 @@ export default function LessonAssetUploadPage() {
     }
     setIsUploadingVideo(true);
     setVideoProgress(0);
+    setVideoMessage("Uploading and verifying video…");
+    setVideoError(null);
     videoAbort.current = new AbortController();
     try {
-      await lessonService.uploadVideo(lessonId as string, videoFile, videoAbort.current.signal, setVideoProgress);
+      const savedLesson = await lessonService.uploadVideo(lessonId as string, videoFile, videoAbort.current.signal, setVideoProgress);
+      queryClient.setQueryData(["lessonDetails", lessonId], savedLesson);
+      queryClient.setQueryData(["lesson", lessonId], savedLesson);
       await queryClient.invalidateQueries({ queryKey: ["courseLessons", courseId] });
-      toast.success("Lesson video uploaded successfully!");
+      setVideoMessage("Video uploaded, verified, and saved. It will remain available after refresh.");
+      toast.success("Lesson video uploaded and verified.");
       setVideoFile(null);
     } catch (err: unknown) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         console.error(err);
-        toast.error(err instanceof Error ? err.message : "Failed to upload lesson video.");
+        const message = getApiErrorMessage(err, "Video upload failed. Select the file to retry.");
+        setVideoError(message);
+        setVideoMessage(null);
+        toast.error(message);
       } else {
+        setVideoError("Upload cancelled. The video was not marked ready. Select the file to retry.");
+        setVideoMessage(null);
         toast("Video upload cancelled.");
       }
     } finally {
@@ -88,11 +101,11 @@ export default function LessonAssetUploadPage() {
                 <Film className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-white">Lecture Video</h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">Upload an MP4 lecture video up to 2048 MB. Large uploads use one direct upload and may need to be restarted if interrupted.</p>
+              <p className="text-xs text-zinc-500 leading-relaxed">Upload MP4, WebM, or Ogg videos up to 2048 MB. Large uploads use one direct PUT and must restart if interrupted.</p>
               
               <input
                 type="file"
-                accept="video/mp4"
+                accept="video/mp4,video/webm,video/ogg"
                 onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
                 className="hidden"
                 id="video-upload-input"
@@ -126,6 +139,9 @@ export default function LessonAssetUploadPage() {
                   </div>
                 </div>
               )}
+              {videoMessage && <p role="status" className="text-xs text-emerald-300">{videoMessage}</p>}
+              {videoError && <p role="alert" className="text-xs text-red-300">{videoError}</p>}
+              {lesson?.video_url && <div className="space-y-2"><p className="text-xs text-emerald-300">Saved video preview:</p><video key={lesson.video_url} src={lesson.video_url} controls className="w-full rounded-xl bg-black" /></div>}
             </div>
 
             {/* PDF Card */}

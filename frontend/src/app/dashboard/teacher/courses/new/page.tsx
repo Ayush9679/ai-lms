@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as zod from "zod";
 import { courseService } from "@/services/api";
@@ -18,7 +18,7 @@ const courseSchema = zod.object({
   description: zod.string().min(10, "Description must be at least 10 characters long"),
   category: zod.string().min(2, "Category is required"),
   level: zod.enum(["beginner", "intermediate", "advanced"]),
-  price: zod.number().min(0, "Price must be positive or zero"),
+  price: zod.number().finite().min(0, "Price must be positive or zero").refine((value) => Math.round(value * 100) === value * 100, "Use no more than two decimal places"),
 });
 
 type CourseForm = zod.infer<typeof courseSchema>;
@@ -32,6 +32,8 @@ export default function NewCoursePage() {
     register,
     handleSubmit,
     formState: { errors },
+    setValue,
+    control,
   } = useForm<CourseForm>({
     resolver: zodResolver(courseSchema),
     defaultValues: {
@@ -39,6 +41,7 @@ export default function NewCoursePage() {
       price: 0,
     },
   });
+  const selectedPrice = useWatch({ control, name: "price" });
 
   const onSubmit = async (data: CourseForm) => {
     setIsSubmitting(true);
@@ -136,14 +139,15 @@ export default function NewCoursePage() {
 
               {/* Price */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Pricing (USD)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  placeholder="0.00"
-                  {...register("price", { valueAsNumber: true })}
-                  className="w-full bg-zinc-950/45 border border-zinc-800 focus:border-purple-500/50 text-white rounded-xl px-4 py-3 text-sm focus:outline-none"
-                />
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Course price</label>
+                <select aria-label="Course pricing" value={selectedPrice > 0 ? "paid" : "free"} onChange={(event) => setValue("price", event.target.value === "free" ? 0 : 1, { shouldValidate: true })} className="w-full bg-zinc-950/45 border border-zinc-800 text-white rounded-xl px-4 py-3 text-sm">
+                  <option value="free">Free</option><option value="paid">Paid</option>
+                </select>
+                {selectedPrice > 0 && <>
+                  <label className="text-xs text-zinc-400">Price (INR)</label>
+                  <input aria-label="Price in Indian rupees" type="number" min="0.01" step="0.01" placeholder="499.00" {...register("price", { valueAsNumber: true })} className="w-full bg-zinc-950/45 border border-zinc-800 focus:border-purple-500/50 text-white rounded-xl px-4 py-3 text-sm focus:outline-none" />
+                  <p className="text-xs text-amber-300">Paid checkout is not available yet. Paid courses cannot be published until checkout is enabled.</p>
+                </>}
                 {errors.price && (
                   <span className="text-xs text-red-400 font-semibold">{errors.price.message}</span>
                 )}

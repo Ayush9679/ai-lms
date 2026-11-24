@@ -29,6 +29,7 @@ export interface Course {
   status: CourseStatus;
   thumbnail: string | null;
   price: number;
+  currency?: "INR";
   instructor_id: string;
   instructor?: UserSummary;
   tags: string | null;
@@ -46,6 +47,7 @@ export interface CourseSummary {
   status: CourseStatus;
   thumbnail: string | null;
   price: number;
+  currency?: "INR";
   instructor_name: string;
   total_lessons: number;
   total_students: number;
@@ -75,6 +77,7 @@ export interface Lesson {
   thumbnail: string | null;
   video_url: string | null;
   video_status: "pending" | "uploading" | "ready" | "failed";
+  video_size_bytes?: number | null;
   pdf_url: string | null;
   transcript: string | null;
   duration_minutes: number | null;

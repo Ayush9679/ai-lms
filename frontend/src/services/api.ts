@@ -1,3 +1,4 @@
+import axios from "axios";
 import { apiClient, clearTokens, setTokens } from "@/lib/api-client";
 import {
   User,
@@ -31,6 +32,15 @@ interface PresignedUploadGrant {
 
 type UploadProgress = (percent: number) => void;
 
+export const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (axios.isAxiosError(error)) {
+    const detail: unknown = error.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("; ") || fallback;
+  }
+  return error instanceof Error ? error.message : fallback;
+};
+
 async function directObjectUpload(
   resourceType: "course" | "lesson",
   resourceId: string,
@@ -56,20 +66,32 @@ async function directObjectUpload(
         return;
       }
       const request = new XMLHttpRequest();
+      const abortUpload = () => request.abort();
       request.open("PUT", grant.upload_url);
       request.setRequestHeader("Content-Type", file.type);
       request.setRequestHeader("If-None-Match", "*");
       request.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
       };
-      request.onload = () => request.status >= 200 && request.status < 300
-        ? resolve()
-        : reject(new Error(`Storage upload failed (${request.status}). Retry the upload.`));
-      request.onerror = () => reject(new Error("Storage upload failed. Check your connection and retry."));
-      request.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
-      signal?.addEventListener("abort", () => request.abort(), { once: true });
-      if (signal?.aborted) request.abort();
-      else request.send(file);
+      request.onload = () => {
+        signal?.removeEventListener("abort", abortUpload);
+        if (request.status >= 200 && request.status < 300) resolve();
+        else reject(new Error(`Storage upload failed (HTTP ${request.status}). Check bucket CORS and retry.`));
+      };
+      request.onerror = () => {
+        signal?.removeEventListener("abort", abortUpload);
+        reject(new Error("Storage upload failed. Check bucket CORS and your connection, then retry."));
+      };
+      request.onabort = () => {
+        signal?.removeEventListener("abort", abortUpload);
+        reject(new DOMException("Upload cancelled", "AbortError"));
+      };
+      if (signal?.aborted) {
+        reject(new DOMException("Upload cancelled", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", abortUpload, { once: true });
+      request.send(file);
     });
     if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
     await apiClient.post("/uploads/complete", { upload_token: grant.upload_token });
@@ -208,6 +230,11 @@ export const lessonService = {
 
   async update(id: string, data: any): Promise<Lesson> {
     const res = await apiClient.patch(`/lessons/${id}`, data);
+    return res.data;
+  },
+
+  async removeVideo(id: string): Promise<Lesson> {
+    const res = await apiClient.patch(`/lessons/${id}`, { video_url: null });
     return res.data;
   },
 

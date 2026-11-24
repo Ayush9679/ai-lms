@@ -153,7 +153,7 @@ export default function CoursesCatalogPage() {
                     </span>
                   </div>
                   <span className="text-sm font-black text-white">
-                    {course.price === 0 ? "Free" : `$${course.price}`}
+                    {course.price === 0 ? "Free" : new Intl.NumberFormat("en-IN", { style: "currency", currency: course.currency ?? "INR" }).format(course.price)}
                   </span>
                 </div>
               </Link>

@@ -32,7 +32,7 @@ export default function CourseDetailsPage() {
   const { courseId } = useParams();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"overview" | "lessons" | "assignments" | "quizzes" | "ai" | "discussions">("overview");
 
@@ -66,6 +66,7 @@ export default function CourseDetailsPage() {
     queryKey: ["courseDetails", courseId],
     queryFn: () => courseService.getDetails(courseId as string),
   });
+  const isCourseManager = !!course && (course.instructor_id === user?.id || user?.role === "admin");
 
   // Fetch lessons
   const { data: lessons, isLoading: lessonsLoading } = useQuery({
@@ -77,21 +78,23 @@ export default function CourseDetailsPage() {
   const { data: enrollmentStatus, isLoading: statusLoading } = useQuery({
     queryKey: ["enrollmentStatus", courseId],
     queryFn: () => enrollmentService.getStatus(courseId as string),
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !!course && !isCourseManager,
   });
+  const isEnrolled = !!enrollmentStatus?.is_enrolled;
+  const hasCourseAccess = isCourseManager || isEnrolled;
 
   // Fetch quizzes
   const { data: quizzes, isLoading: quizzesLoading } = useQuery({
     queryKey: ["courseQuizzes", courseId],
     queryFn: () => quizService.listByCourse(courseId as string),
-    enabled: !!enrollmentStatus?.is_enrolled,
+    enabled: hasCourseAccess,
   });
 
   // Fetch assignments
   const { data: assignments, isLoading: assignmentsLoading } = useQuery({
     queryKey: ["courseAssignments", courseId],
     queryFn: () => assignmentService.listByCourse(courseId as string),
-    enabled: !!enrollmentStatus?.is_enrolled,
+    enabled: hasCourseAccess,
   });
 
   // Enrollment mutation
@@ -218,11 +221,12 @@ export default function CourseDetailsPage() {
   };
 
   const getSyllabusAction = () => {
-    if (statusLoading) return null;
+    if (statusLoading && !isCourseManager) return null;
     
-    const isEnrolled = enrollmentStatus?.is_enrolled;
-    
-    if (isEnrolled) {
+    if (hasCourseAccess) {
+      if (user?.role === "teacher" && course?.instructor_id === user.id) {
+        return <Link href={`/dashboard/teacher/courses/${courseId}`} className="glow-btn w-full py-4 text-sm font-bold bg-gradient-to-r from-purple-600 to-blue-500 text-white rounded-2xl flex items-center justify-center gap-1.5">Manage and preview course <ChevronRight className="w-4 h-4" /></Link>;
+      }
       // Find first lesson to play
       const firstLessonId = lessons && lessons.length > 0 ? lessons[0].id : null;
       if (firstLessonId) {
@@ -247,13 +251,14 @@ export default function CourseDetailsPage() {
       }
     }
 
+    if (course && course.price > 0) return <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-center text-sm text-amber-200">Paid checkout is not available yet. You can’t enroll in this course right now.</div>;
     return (
       <button
         onClick={handleEnrollment}
         disabled={enrollMutation.isPending}
         className="glow-btn w-full py-4 text-sm font-bold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-2xl flex items-center justify-center gap-1.5 shadow-lg shadow-purple-500/10 cursor-pointer"
       >
-        {enrollMutation.isPending ? "Processing..." : course?.price === 0 ? "Enroll Free" : `Enroll for $${course?.price}`}
+        {enrollMutation.isPending ? "Processing..." : "Enroll Free"}
         <ChevronRight className="w-4 h-4" />
       </button>
     );
@@ -268,8 +273,6 @@ export default function CourseDetailsPage() {
   }
 
   if (!course) return null;
-
-  const isEnrolled = enrollmentStatus?.is_enrolled;
 
   return (
     <div className="min-h-screen relative flex flex-col justify-between overflow-x-hidden">
@@ -286,19 +289,19 @@ export default function CourseDetailsPage() {
             <h1 className="text-3xl sm:text-4xl font-extrabold text-white mt-4 leading-snug">{course.title}</h1>
             <p className="text-zinc-400 text-sm mt-3 max-w-3xl leading-relaxed">{course.description}</p>
           </div>
-          {isEnrolled && (
+          {hasCourseAccess && (
             <div className="p-3 bg-purple-950/25 border border-purple-500/15 rounded-2xl flex items-center gap-2.5 w-fit h-fit">
               <BookMarked className="w-5 h-5 text-purple-400" />
               <div>
                 <p className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Access level</p>
-                <p className="text-xs font-bold text-white mt-0.5">Enrolled Student</p>
+                <p className="text-xs font-bold text-white mt-0.5">{isCourseManager ? "Instructor preview" : "Enrolled Student"}</p>
               </div>
             </div>
           )}
         </div>
 
         {/* Tab Headers if enrolled */}
-        {isEnrolled && (
+        {hasCourseAccess && (
           <div className="flex border-b border-zinc-800/80 mb-6 flex-wrap">
             {[
               { id: "overview", name: "Overview", icon: BookOpen },
@@ -333,7 +336,7 @@ export default function CourseDetailsPage() {
           <div className="lg:col-span-2 flex flex-col gap-6">
             
             {/* Overview / Purchase View (or active Tab contents) */}
-            {(!isEnrolled || activeTab === "overview") && (
+            {(!hasCourseAccess || activeTab === "overview") && (
               <div className="flex flex-col gap-6">
                 <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                   <h3 className="text-base font-bold text-white">Course Summary & Core Value</h3>
@@ -381,7 +384,7 @@ export default function CourseDetailsPage() {
                             </div>
                           </div>
                           
-                          {isEnrolled && (
+                          {hasCourseAccess && (
                             <Link
                               href={`/courses/${courseId}/lessons/${lesson.id}`}
                               className="p-1.5 bg-zinc-900 border border-zinc-800 hover:border-purple-500/20 text-zinc-400 hover:text-purple-400 rounded-lg transition"
@@ -399,7 +402,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "lessons" && (
+            {hasCourseAccess && activeTab === "lessons" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Syllabus curriculum units</h3>
                 {lessonsLoading ? (
@@ -435,7 +438,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "assignments" && (
+            {hasCourseAccess && activeTab === "assignments" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Required Course Assignments</h3>
                 {assignmentsLoading ? (
@@ -468,7 +471,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "quizzes" && (
+            {hasCourseAccess && activeTab === "quizzes" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Course Quizzes</h3>
                 {quizzesLoading ? (
@@ -501,7 +504,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "ai" && (
+            {hasCourseAccess && activeTab === "ai" && (
               <div className="flex flex-col gap-6">
                 {/* AI Selector Header */}
                 <div className="flex items-center justify-between bg-zinc-950/45 border border-zinc-900 rounded-2xl p-4">
@@ -688,7 +691,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "discussions" && (
+            {hasCourseAccess && activeTab === "discussions" && (
               <div className="flex flex-col gap-6">
                 {/* Resources */}
                 <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
@@ -730,7 +733,7 @@ export default function CourseDetailsPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-zinc-400 font-medium">Access Tier</span>
                 <span className="text-2xl font-black text-white">
-                  {course.price === 0 ? "Free" : `$${course.price}`}
+                  {course.price === 0 ? "Free" : new Intl.NumberFormat("en-IN", { style: "currency", currency: course.currency ?? "INR" }).format(course.price)}
                 </span>
               </div>
 
