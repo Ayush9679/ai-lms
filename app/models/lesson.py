@@ -4,7 +4,7 @@ AI-LMS Lesson Models — Lessons and per-student progress tracking.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +27,7 @@ class Lesson(UUIDBase):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     video_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     video_status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    video_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     video_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     pdf_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     pdf_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

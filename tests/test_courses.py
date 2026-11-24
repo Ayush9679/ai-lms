@@ -7,6 +7,7 @@ from httpx import AsyncClient
 import uuid
 from app.models.course import Course
 from app.models.lesson import Lesson
+from app.models.course import CourseStatus
 
 
 async def _register_and_login(client, email, password, role="teacher"):
@@ -393,3 +394,131 @@ async def test_other_teacher_cannot_publish_course(client):
         headers={"Authorization": f"Bearer {other}"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_course_owner_can_preview_draft_while_students_follow_enrollment_rules(
+    client: AsyncClient, db, admin_user
+):
+    owner_token = await _register_and_login(
+        client, "owner_preview@test.com", "OwnerPreview123!", "teacher"
+    )
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    created = await client.post(
+        "/api/v1/courses/", json={"title": "Owner Preview Course"}, headers=owner_headers
+    )
+    course_id = created.json()["id"]
+    course = await db.get(Course, uuid.UUID(course_id))
+    private_lesson = Lesson(
+        course_id=course.id,
+        title="Unpublished lesson",
+        is_published=False,
+        video_url="/static/private.mp4",
+        video_status="ready",
+    )
+    public_lesson = Lesson(
+        course_id=course.id,
+        title="Published lesson",
+        is_published=True,
+        video_url="/static/public.mp4",
+        video_status="ready",
+    )
+    db.add_all([private_lesson, public_lesson])
+    await db.commit()
+
+    assert (await client.get(f"/api/v1/courses/{course_id}", headers=owner_headers)).status_code == 200
+    owner_list = await client.get(f"/api/v1/courses/{course_id}/lessons", headers=owner_headers)
+    assert {lesson["id"] for lesson in owner_list.json()} == {
+        str(private_lesson.id), str(public_lesson.id)
+    }
+    assert (await client.get(f"/api/v1/lessons/{private_lesson.id}", headers=owner_headers)).status_code == 200
+
+    student_token = await _register_and_login(
+        client, "preview_student@test.com", "PreviewStudent123!", "student"
+    )
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+    assert (await client.get(f"/api/v1/courses/{course_id}", headers=student_headers)).status_code == 404
+    assert (await client.get(f"/api/v1/lessons/{private_lesson.id}", headers=student_headers)).status_code == 404
+
+    course.status = CourseStatus.published
+    course.thumbnail = "/static/course.png"
+    await db.commit()
+    student_list = await client.get(f"/api/v1/courses/{course_id}/lessons", headers=student_headers)
+    assert [lesson["id"] for lesson in student_list.json()] == [str(public_lesson.id)]
+    assert (await client.get(f"/api/v1/lessons/{public_lesson.id}", headers=student_headers)).status_code == 403
+    enrolled = await client.post(
+        "/api/v1/enrollments/", json={"course_id": course_id}, headers=student_headers
+    )
+    assert enrolled.status_code == 201
+    assert (await client.get(f"/api/v1/lessons/{public_lesson.id}", headers=student_headers)).status_code == 200
+
+    admin_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": admin_user.email, "password": "TestPass123!"},
+    )
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    assert (await client.get(f"/api/v1/lessons/{private_lesson.id}", headers=admin_headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_course_price_is_decimal_validated_and_paid_courses_cannot_publish_until_checkout(
+    client: AsyncClient, db,
+):
+    token = await _register_and_login(
+        client, "pricing_teacher@test.com", "PricingTeacher123!", "teacher"
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/courses/",
+        json={"title": "INR Pricing", "price": "1000.50", "currency": "INR"},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    assert created.json()["price"] == 1000.5
+    assert created.json()["currency"] == "INR"
+
+    negative = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}", json={"price": "-1.00"}, headers=headers
+    )
+    assert negative.status_code == 422
+    precision = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}", json={"price": "1.001"}, headers=headers
+    )
+    assert precision.status_code == 422
+    unsupported = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}", json={"currency": "USD"}, headers=headers
+    )
+    assert unsupported.status_code == 422
+
+    await _meet_publish_requirements(db, created.json()["id"])
+    publish = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}",
+        json={"status": "published"},
+        headers=headers,
+    )
+    assert publish.status_code == 422
+    assert "Paid-course publishing is disabled" in publish.json()["message"]
+
+    free_price = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}", json={"price": "0.00"}, headers=headers
+    )
+    assert free_price.status_code == 200
+    published = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}",
+        json={"status": "published"},
+        headers=headers,
+    )
+    assert published.status_code == 200
+    paid_price_after_publish = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}", json={"price": "5.00"}, headers=headers
+    )
+    assert paid_price_after_publish.status_code == 422
+
+    invalid_thumbnail = await client.patch(
+        f"/api/v1/courses/{created.json()['id']}",
+        json={"thumbnail": "https://attacker.invalid/image.png"},
+        headers=headers,
+    )
+    assert invalid_thumbnail.status_code == 422

@@ -1,0 +1,9 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "save/razorpay-backend": false,
+      "save/razorpay-checkout": false,
+      "save/frontend-r2-fixes": false
+    }
+  }
+}

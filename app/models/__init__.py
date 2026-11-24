@@ -1,6 +1,7 @@
 """
 AI-LMS Models Package — imports all models to ensure Alembic detects them.
 """
+
 from app.models.ai_chat import (
     AIChatMessage,
     AIChatSession,
@@ -14,6 +15,7 @@ from app.models.base import UUIDBase
 from app.models.course import Course, CourseFile, CourseLevel, CourseStatus, FileType
 from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.models.lesson import Lesson, LessonProgress
+from app.models.payment import Payment, PaymentOrder, WebhookEvent
 from app.models.quiz import DifficultyLevel, Question, QuestionType, Quiz, QuizAnswer, QuizAttempt
 from app.models.user import EmailVerification, PasswordReset, User, UserRole
 
@@ -37,6 +39,9 @@ __all__ = [
     # Enrollment
     "Enrollment",
     "EnrollmentStatus",
+    "Payment",
+    "PaymentOrder",
+    "WebhookEvent",
     # Quiz
     "Quiz",
     "Question",

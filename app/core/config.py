@@ -4,9 +4,10 @@ Pydantic v2 BaseSettings with full validation and computed fields.
 """
 
 from functools import lru_cache
+from decimal import Decimal
 from typing import Any
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.database_url import normalize_async_database_url
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     # =========================================================================
@@ -27,6 +29,29 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
+
+    RAZORPAY_ENABLED: bool = False
+    RAZORPAY_TEST_MODE: bool = True
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: SecretStr = SecretStr("")
+    RAZORPAY_WEBHOOK_SECRET: SecretStr = SecretStr("")
+    PLATFORM_COMMISSION_PERCENT: Decimal = Field(default=Decimal("10"), ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_razorpay(self) -> "Settings":
+        if self.RAZORPAY_ENABLED:
+            if (
+                not self.RAZORPAY_TEST_MODE
+                or not self.RAZORPAY_KEY_ID.startswith("rzp_test_")
+                or self.RAZORPAY_KEY_ID == "rzp_test_"
+            ):
+                raise ValueError("Razorpay requires a Test Mode key in this release")
+            if not all(
+                secret.get_secret_value().strip()
+                for secret in (self.RAZORPAY_KEY_SECRET, self.RAZORPAY_WEBHOOK_SECRET)
+            ):
+                raise ValueError("Razorpay requires API and webhook secrets")
+        return self
 
     # =========================================================================
     # Database
@@ -89,7 +114,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = Field(default=50, ge=1, le=1024)
     MAX_VIDEO_SIZE_MB: int = Field(default=2048, ge=1, le=5120)
     MAX_IMAGE_SIZE_MB: int = Field(default=10, ge=1, le=1024)
-    TEACHER_REVENUE_SHARE: float = Field(default=0.70, ge=0.0, le=1.0)
+    TEACHER_REVENUE_SHARE: Decimal = Field(default=Decimal("0.90"), ge=0, le=1)
     ALLOWED_IMAGE_TYPES: list[str] = ["image/jpeg", "image/png", "image/webp", "image/gif"]
     ALLOWED_VIDEO_TYPES: list[str] = ["video/mp4", "video/webm", "video/ogg"]
     ALLOWED_DOCUMENT_TYPES: list[str] = ["application/pdf"]

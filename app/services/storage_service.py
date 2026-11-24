@@ -73,6 +73,22 @@ class ObjectStorage:
     async def head(self, key: str) -> dict:
         return await asyncio.to_thread(self.client.head_object, Bucket=self.bucket, Key=key)
 
+    async def read_prefix(self, key: str, length: int = 32) -> bytes:
+        """Read only enough bytes to validate an uploaded object's declared media type."""
+        def read() -> bytes:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=key,
+                Range=f"bytes=0-{length - 1}",
+            )
+            body = response["Body"]
+            try:
+                return body.read(length)
+            finally:
+                body.close()
+
+        return await asyncio.to_thread(read)
+
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
 

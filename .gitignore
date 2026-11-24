@@ -237,6 +237,7 @@ aws-credentials*.json
 ############################################
 checkpoints/
 models/
+!/app/models/
 artifacts/
 outputs/
 runs/

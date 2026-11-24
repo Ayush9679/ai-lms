@@ -3,6 +3,7 @@ AI-LMS Course Models — Courses and uploaded course files.
 """
 import enum
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import Enum, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
@@ -56,7 +57,10 @@ class Course(UUIDBase):
     thumbnail: Mapped[str | None] = mapped_column(String(500), nullable=True)
     thumbnail_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     file_upload_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    price: Mapped[float] = mapped_column(Numeric(10, 2), default=0.00, nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(3), default="INR", server_default="INR", nullable=False
+    )
     instructor_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )

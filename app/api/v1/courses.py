@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.logging import get_logger
 from app.dependencies.auth import get_current_user, get_optional_user, require_teacher
 from app.models.course import CourseStatus
 from app.models.user import User, UserRole
@@ -24,8 +25,19 @@ from app.schemas.course import (
 )
 from app.services.course_service import CourseService
 from app.services.file_service import FileService
+from app.services.storage_service import get_object_storage, is_r2_key
 
 router = APIRouter()
+logger = get_logger(__name__)
+
+
+async def _delete_old_thumbnail(stored_path: str | None) -> None:
+    if not is_r2_key(stored_path):
+        return
+    try:
+        await get_object_storage().delete(stored_path.removeprefix("r2://"))
+    except Exception:
+        logger.warning("Old private course thumbnail cleanup failed", extra={"operation": "delete_thumbnail"})
 
 
 async def _course_to_summary(
@@ -42,6 +54,7 @@ async def _course_to_summary(
         status=course.status,
         thumbnail=await file_svc.resolve_url(course.thumbnail),
         price=float(course.price),
+        currency=course.currency,
         instructor_name=course.instructor.full_name if course.instructor else "Unknown",
         total_lessons=total_lessons,
         total_students=total_students,
@@ -145,6 +158,7 @@ async def get_course(
         status=course.status,
         thumbnail=await FileService().resolve_url(course.thumbnail),
         price=float(course.price),
+        currency=course.currency,
         tags=course.tags,
         instructor=course.instructor,
         instructor_id=course.instructor_id,
@@ -168,7 +182,14 @@ async def update_course(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CourseSummary:
     svc = CourseService(db)
+    previous_thumbnail = None
+    if "thumbnail" in request.model_fields_set:
+        managed = await svc.get_manageable_course(course_id, current_user.id, current_user.role)
+        previous_thumbnail = managed.thumbnail
     course = await svc.update_course(course_id, current_user.id, current_user.role, request)
+    if "thumbnail" in request.model_fields_set:
+        await db.commit()
+        await _delete_old_thumbnail(previous_thumbnail)
     return await _course_to_summary(course)
 
 
@@ -203,10 +224,14 @@ async def upload_thumbnail(
 ) -> CourseSummary:
     svc = CourseService(db)
     course = await svc.get_manageable_course(course_id, current_user.id, current_user.role)
+    previous_thumbnail = course.thumbnail
 
     file_svc = FileService()
     _, file_path, _, _, _ = await file_svc.save_image(file)
     course = await svc.set_thumbnail(course, current_user.id, current_user.role, file_path)
+    await db.commit()
+    if previous_thumbnail != file_path:
+        await _delete_old_thumbnail(previous_thumbnail)
     return await _course_to_summary(course)
 
 
@@ -265,9 +290,8 @@ async def list_course_files(
     if not is_manager:
         if not current_user:
             raise ForbiddenError("Authentication is required to access course files")
-        if course.price > 0:
-            raise ForbiddenError("Paid course files require a completed purchase")
         from app.repositories.enrollment_repo import EnrollmentRepository
+        from app.services.payment_service import has_captured_payment
 
         enrollment = await EnrollmentRepository(db).get_by_student_and_course(
             current_user.id, course_id
@@ -278,6 +302,8 @@ async def list_course_files(
             or enrollment.status.value not in {"active", "completed"}
         ):
             raise ForbiddenError("You must be enrolled to access course files")
+        if course.price > 0 and not await has_captured_payment(db, current_user.id, course_id):
+            raise ForbiddenError("Paid course files require a completed purchase")
     repo = CourseFileRepository(db)
     files = await repo.get_by_course(course_id)
     file_svc = FileService()
