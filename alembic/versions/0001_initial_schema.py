@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import uuid
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0001"
@@ -73,6 +73,13 @@ def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM) -> bool:
     Returns True when this migration creates the type. A same-named non-enum
     object or enum with different labels is an error; neither case is ignored.
     """
+    if context.is_offline_mode():
+        # Offline generation has no database catalog to inspect. Emit the
+        # enum DDL; the online path below remains responsible for validating
+        # pre-existing enum types before a real migration runs.
+        enum_type.create(bind, checkfirst=False)
+        return True
+
     schema = enum_type.schema or "public"
     rows = bind.execute(
         sa.text(
@@ -109,6 +116,11 @@ def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM) -> bool:
 
 
 def _require_public_schema(bind) -> None:
+    if context.is_offline_mode():
+        # The online migration validates the selected schema against the
+        # live connection. Offline SQL has no scalar result to inspect.
+        return
+
     current_schema = bind.execute(sa.text("SELECT current_schema()")).scalar_one()
     if current_schema != "public":
         raise RuntimeError(
