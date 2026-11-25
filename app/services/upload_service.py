@@ -31,6 +31,7 @@ IMAGE_EXTENSIONS = {
 }
 VIDEO_EXTENSIONS = {"video/mp4": ".mp4", "video/webm": ".webm", "video/ogg": ".ogv"}
 PDF_MIME = "application/pdf"
+MULTIPART_CHUNK_SIZE_BYTES = 64 * 1024 * 1024
 
 
 class UploadService:
@@ -57,11 +58,11 @@ class UploadService:
             extensions = IMAGE_EXTENSIONS
             max_size = settings.MAX_IMAGE_SIZE_BYTES
         elif asset_type == "video" and resource_type == "lesson":
-            extensions = VIDEO_EXTENSIONS
+            extensions = {"video/mp4": ".mp4"}
             max_size = settings.MAX_VIDEO_SIZE_BYTES
         elif asset_type == "pdf" and resource_type == "lesson":
             extensions = {PDF_MIME: ".pdf"}
-            max_size = settings.MAX_UPLOAD_SIZE_BYTES
+            max_size = settings.MAX_VIDEO_SIZE_BYTES
         elif asset_type == "file" and resource_type == "course":
             extensions = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | {PDF_MIME: ".pdf"}
             max_size = (
@@ -120,9 +121,42 @@ class UploadService:
         folder = "files" if asset_type == "file" else asset_type
         key = f"{resource_type}s/{resource_id}/{folder}/{upload_id}{extension}"
         storage = get_object_storage()
-        upload_url = await storage.presign_put(
-            key, mime_type, size_bytes, settings.STORAGE_PRESIGNED_URL_TTL
-        )
+        multipart_upload_id = None
+        upload_url = None
+        parts = []
+        is_multipart = size_bytes > MULTIPART_CHUNK_SIZE_BYTES
+        try:
+            if is_multipart:
+                multipart_upload_id = await storage.create_multipart_upload(key, mime_type)
+                part_count = (size_bytes + MULTIPART_CHUNK_SIZE_BYTES - 1) // (
+                    MULTIPART_CHUNK_SIZE_BYTES
+                )
+                parts = [
+                    {
+                        "part_number": part_number,
+                        "upload_url": await storage.presign_upload_part(
+                            key,
+                            multipart_upload_id,
+                            part_number,
+                            settings.STORAGE_PRESIGNED_URL_TTL,
+                        ),
+                    }
+                    for part_number in range(1, part_count + 1)
+                ]
+            else:
+                upload_url = await storage.presign_put(
+                    key, mime_type, size_bytes, settings.STORAGE_PRESIGNED_URL_TTL
+                )
+        except Exception:
+            if multipart_upload_id:
+                try:
+                    await storage.abort_multipart_upload(key, multipart_upload_id)
+                except Exception:
+                    logger.warning(
+                        "R2 multipart upload cleanup failed",
+                        extra={"operation": "abort_multipart_upload", "asset_type": asset_type},
+                    )
+            raise
 
         upload_field = f"{asset_type}_upload_id"
         if hasattr(resource, upload_field):
@@ -130,7 +164,18 @@ class UploadService:
         if isinstance(resource, Lesson) and asset_type == "video":
             resource.video_status = "uploading"
         self.db.add(resource)
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except Exception:
+            if multipart_upload_id:
+                try:
+                    await storage.abort_multipart_upload(key, multipart_upload_id)
+                except Exception:
+                    logger.warning(
+                        "R2 multipart upload cleanup after grant failure failed",
+                        extra={"operation": "abort_multipart_upload", "asset_type": asset_type},
+                    )
+            raise
 
         now = datetime.now(timezone.utc)
         grant = {
@@ -143,12 +188,17 @@ class UploadService:
             "key": key,
             "mime_type": mime_type,
             "size_bytes": size_bytes,
+            "upload_mode": "multipart" if is_multipart else "put",
+            "multipart_upload_id": multipart_upload_id,
             "original_name": Path((original_name or "upload").replace("\\", "/")).name[:500],
             "iat": now,
             "exp": now + timedelta(seconds=settings.STORAGE_UPLOAD_GRANT_TTL),
         }
         return {
+            "upload_method": "multipart" if is_multipart else "put",
             "upload_url": upload_url,
+            "parts": parts,
+            "part_size_bytes": MULTIPART_CHUNK_SIZE_BYTES if is_multipart else None,
             "upload_token": jwt.encode(grant, settings.SECRET_KEY, algorithm=settings.ALGORITHM),
             "expires_in": settings.STORAGE_PRESIGNED_URL_TTL,
         }
@@ -184,7 +234,13 @@ class UploadService:
             )
         raise ValidationError(message)
 
-    async def complete(self, token: str, requester_id: uuid.UUID, requester_role: UserRole) -> str:
+    async def complete(
+        self,
+        token: str,
+        requester_id: uuid.UUID,
+        requester_role: UserRole,
+        parts: list[dict[str, int | str]] | None = None,
+    ) -> str:
         grant = self._decode_grant(token, requester_id)
         resource: Course | Lesson | None = None
         try:
@@ -199,7 +255,69 @@ class UploadService:
                     return "ready"
             if getattr(resource, upload_field, None) != grant.get("upload_id"):
                 raise ForbiddenError("This upload was replaced or cancelled. Start a new upload.")
-            metadata = await get_object_storage().head(grant["key"])
+            storage = get_object_storage()
+            if grant.get("upload_mode") == "multipart":
+                expected_count = (
+                    grant["size_bytes"] + MULTIPART_CHUNK_SIZE_BYTES - 1
+                ) // MULTIPART_CHUNK_SIZE_BYTES
+                uploaded_parts = parts or []
+                expected_numbers = list(range(1, expected_count + 1))
+                if [part.get("part_number") for part in uploaded_parts] != expected_numbers or any(
+                    not part.get("etag") for part in uploaded_parts
+                ):
+                    try:
+                        await storage.abort_multipart_upload(
+                            grant["key"], grant["multipart_upload_id"]
+                        )
+                    except Exception:
+                        logger.warning(
+                            "R2 multipart abort after invalid parts failed",
+                            extra={
+                                "operation": "abort_multipart_upload",
+                                "asset_type": grant.get("asset_type"),
+                            },
+                        )
+                    await self._reject_upload(
+                        resource,
+                        grant,
+                        "Multipart upload is missing one or more part ETags. Retry the upload.",
+                    )
+                try:
+                    await storage.complete_multipart_upload(
+                        grant["key"],
+                        grant["multipart_upload_id"],
+                        [
+                            {"PartNumber": part["part_number"], "ETag": part["etag"]}
+                            for part in uploaded_parts
+                        ],
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "R2 multipart completion failed",
+                        extra={
+                            "operation": "complete_multipart_upload",
+                            "asset_type": grant.get("asset_type"),
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+                    try:
+                        await storage.abort_multipart_upload(
+                            grant["key"], grant["multipart_upload_id"]
+                        )
+                    except Exception:
+                        logger.warning(
+                            "R2 multipart abort after completion failure failed",
+                            extra={
+                                "operation": "abort_multipart_upload",
+                                "asset_type": grant.get("asset_type"),
+                            },
+                        )
+                    await self._reject_upload(
+                        resource,
+                        grant,
+                        "R2 could not complete the multipart upload. Retry the upload.",
+                    )
+            metadata = await storage.head(grant["key"])
         except (KeyError, ValueError) as exc:
             raise ForbiddenError("Upload authorization is invalid. Start a new upload.") from exc
         except Exception as exc:
@@ -319,11 +437,23 @@ class UploadService:
             resource.video_status = (
                 "failed" if failed else "ready" if resource.video_url else "pending"
             )
+        storage = get_object_storage()
         try:
-            await get_object_storage().delete(grant["key"])
-        except Exception:
-            # An upload may have been cancelled before any object reached R2.
-            pass
+            if grant.get("upload_mode") == "multipart":
+                await storage.abort_multipart_upload(
+                    grant["key"], grant["multipart_upload_id"]
+                )
+            else:
+                await storage.delete(grant["key"])
+        except Exception as exc:
+            logger.warning(
+                "R2 upload cancellation cleanup failed",
+                extra={
+                    "operation": "cancel_upload",
+                    "asset_type": grant.get("asset_type"),
+                    "error_type": type(exc).__name__,
+                },
+            )
         self.db.add(resource)
         await self.db.flush()
         return "cancelled"

@@ -43,7 +43,8 @@ def test_storage_endpoint_url_wins_over_account_id(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             STORAGE_BUCKET="ai-lms-media",
-            STORAGE_PRESIGNED_URL_TTL=900,
+            STORAGE_PRESIGNED_URL_TTL=3600,
+            STORAGE_PRESIGNED_DOWNLOAD_URL_TTL=900,
             STORAGE_ENDPOINT_URL="https://configured-endpoint.example",
             STORAGE_ACCOUNT_ID="must-not-be-used",
             STORAGE_ACCESS_KEY_ID="key",
@@ -55,10 +56,13 @@ def test_storage_endpoint_url_wins_over_account_id(monkeypatch):
         storage_service.boto3, "client", lambda *args, **kwargs: captured.update(kwargs) or object()
     )
 
-    storage_service.ObjectStorage()
+    storage = storage_service.ObjectStorage()
 
     assert captured["endpoint_url"] == "https://configured-endpoint.example"
     assert captured["region_name"] == "auto"
+    assert storage.ttl == 900
+    assert captured["config"].request_checksum_calculation == "when_required"
+    assert captured["config"].response_checksum_validation == "when_required"
 
 
 def test_storage_account_id_is_endpoint_fallback(monkeypatch):
@@ -68,7 +72,8 @@ def test_storage_account_id_is_endpoint_fallback(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             STORAGE_BUCKET="ai-lms-media",
-            STORAGE_PRESIGNED_URL_TTL=900,
+            STORAGE_PRESIGNED_URL_TTL=3600,
+            STORAGE_PRESIGNED_DOWNLOAD_URL_TTL=900,
             STORAGE_ENDPOINT_URL=None,
             STORAGE_ACCOUNT_ID="account-id",
             STORAGE_ACCESS_KEY_ID="key",
@@ -88,7 +93,7 @@ def test_storage_account_id_is_endpoint_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_presigned_put_contract_binds_content_length_type_and_create_only(monkeypatch):
+async def test_presigned_put_signs_content_type_without_length_or_if_none_match(monkeypatch):
     captured = {}
 
     class FakeClient:
@@ -101,7 +106,8 @@ async def test_presigned_put_contract_binds_content_length_type_and_create_only(
         "get_settings",
         lambda: SimpleNamespace(
             STORAGE_BUCKET="ai-lms-media",
-            STORAGE_PRESIGNED_URL_TTL=900,
+            STORAGE_PRESIGNED_URL_TTL=3600,
+            STORAGE_PRESIGNED_DOWNLOAD_URL_TTL=900,
             STORAGE_ENDPOINT_URL="https://account.r2.cloudflarestorage.com",
             STORAGE_ACCOUNT_ID=None,
             STORAGE_ACCESS_KEY_ID="key",
@@ -120,9 +126,28 @@ async def test_presigned_put_contract_binds_content_length_type_and_create_only(
         "Bucket": "ai-lms-media",
         "Key": "courses/owned/thumbnail/image.png",
         "ContentType": "image/png",
-        "ContentLength": 4096,
-        "IfNoneMatch": "*",
     }
+    assert captured["expires"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_presigned_download_keeps_short_lifetime():
+    captured = {}
+
+    class FakeClient:
+        def generate_presigned_url(self, operation, Params, ExpiresIn):
+            captured.update(operation=operation, params=Params, expires=ExpiresIn)
+            return "https://private-r2.test/object"
+
+    service = object.__new__(storage_service.ObjectStorage)
+    service.bucket = "ai-lms-media"
+    service.ttl = 900
+    service.client = FakeClient()
+
+    await service.presign("r2://lessons/1/video.mp4")
+
+    assert captured["operation"] == "get_object"
+    assert captured["expires"] == 900
 
 
 def test_single_put_accepts_configured_two_gib_video_limit():
@@ -131,3 +156,21 @@ def test_single_put_accepts_configured_two_gib_video_limit():
     assert service._validate_asset("lesson", "video", "video/mp4", size) == ".mp4"
     with pytest.raises(ValidationError, match="2048 MB limit"):
         service._validate_asset("lesson", "video", "video/mp4", size + 1)
+
+
+def test_r2_environment_variable_names_are_supported(monkeypatch):
+    monkeypatch.setenv("R2_ACCOUNT_ID", "r2-account")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "r2-key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "r2-secret")
+    monkeypatch.setenv("R2_BUCKET", "r2-bucket")
+
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="sqlite+aiosqlite:///:memory:",
+        SECRET_KEY="test-secret-key-that-is-at-least-thirty-two-bytes",
+    )
+
+    assert settings.STORAGE_ACCOUNT_ID == "r2-account"
+    assert settings.STORAGE_ACCESS_KEY_ID == "r2-key"
+    assert settings.STORAGE_SECRET_ACCESS_KEY == "r2-secret"
+    assert settings.STORAGE_BUCKET == "r2-bucket"

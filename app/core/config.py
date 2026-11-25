@@ -7,7 +7,7 @@ from functools import lru_cache
 from decimal import Decimal
 from typing import Any
 
-from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.database_url import normalize_async_database_url
@@ -104,15 +104,26 @@ class Settings(BaseSettings):
     # =========================================================================
     UPLOAD_DIR: str = "uploads"
     STORAGE_ENDPOINT_URL: str | None = None
-    STORAGE_REGION: str = "auto"
-    STORAGE_ACCESS_KEY_ID: str | None = None
-    STORAGE_SECRET_ACCESS_KEY: str | None = None
-    STORAGE_BUCKET: str = "ai-lms-media"
-    STORAGE_ACCOUNT_ID: str | None = None
-    STORAGE_PRESIGNED_URL_TTL: int = Field(default=900, ge=60, le=3600)
+    STORAGE_REGION: str = Field(default="auto", pattern="^auto$")
+    STORAGE_ACCESS_KEY_ID: str | None = Field(
+        default=None, validation_alias=AliasChoices("R2_ACCESS_KEY_ID", "STORAGE_ACCESS_KEY_ID")
+    )
+    STORAGE_SECRET_ACCESS_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("R2_SECRET_ACCESS_KEY", "STORAGE_SECRET_ACCESS_KEY"),
+    )
+    STORAGE_BUCKET: str = Field(
+        default="ai-lms-media",
+        validation_alias=AliasChoices("R2_BUCKET", "STORAGE_BUCKET"),
+    )
+    STORAGE_ACCOUNT_ID: str | None = Field(
+        default=None, validation_alias=AliasChoices("R2_ACCOUNT_ID", "STORAGE_ACCOUNT_ID")
+    )
+    STORAGE_PRESIGNED_URL_TTL: int = Field(default=3600, ge=3600, le=3600)
+    STORAGE_PRESIGNED_DOWNLOAD_URL_TTL: int = Field(default=900, ge=60, le=3600)
     STORAGE_UPLOAD_GRANT_TTL: int = Field(default=86400, ge=900, le=604800)
     MAX_UPLOAD_SIZE_MB: int = Field(default=50, ge=1, le=1024)
-    MAX_VIDEO_SIZE_MB: int = Field(default=2048, ge=1, le=5120)
+    MAX_VIDEO_SIZE_MB: int = Field(default=2048, ge=1, le=2048)
     MAX_IMAGE_SIZE_MB: int = Field(default=10, ge=1, le=1024)
     TEACHER_REVENUE_SHARE: Decimal = Field(default=Decimal("0.90"), ge=0, le=1)
     ALLOWED_IMAGE_TYPES: list[str] = ["image/jpeg", "image/png", "image/webp", "image/gif"]

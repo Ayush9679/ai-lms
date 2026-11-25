@@ -79,11 +79,11 @@ Set `STORAGE_ENDPOINT_URL`, `STORAGE_REGION=auto`, `STORAGE_ACCESS_KEY_ID`, `STO
 
 Paid courses use verified Razorpay Test Mode checkout when enabled. Free enrollment uses the existing enrollment endpoint. Paid lesson media and course files require an active or completed enrollment backed by a captured payment. Course owners and admins retain their content preview access.
 
-`MAX_VIDEO_SIZE_MB=2048` permits a 2 GiB video through one presigned PUT (R2 single PUT supports up to 5 GiB). This flow is not multipart or resumable: a network failure requires retrying the full file. Thumbnail uploads use `MAX_IMAGE_SIZE_MB=10`; JPEG, PNG, WEBP and GIF are signature-validated. The exact private-bucket CORS policy and upload behavior are documented in [docs/r2-uploads.md](docs/r2-uploads.md).
+`MAX_VIDEO_SIZE_MB=2048` permits lesson MP4 and PDF files up to 2 GiB. Uploads over 64 MiB use 64 MiB R2 multipart chunks with per-chunk retries and cancellation; smaller files use a 1-hour presigned PUT. Thumbnail uploads use `MAX_IMAGE_SIZE_MB=10`; JPEG, PNG, WEBP and GIF are signature-validated. The exact private-bucket CORS policy and upload behavior are documented in [docs/r2-uploads.md](docs/r2-uploads.md).
 
 Revision `0002_lesson_media_upload_state` adds verified video state, lesson thumbnails, and one-time upload grant tracking. Revision `0003_course_currency` adds an INR currency code to existing course prices and a verified video-size field. On staging, first back up the database, then run `alembic upgrade head` (or `python -m alembic upgrade head` in the local virtual environment) and verify the API before scheduling the production release. No production migration was run as part of this change.
 
-For deployment, keep the bucket private. Presigned links expire after 15 minutes by default (`STORAGE_PRESIGNED_URL_TTL`). The legacy server-proxied multipart endpoints remain capped by `MAX_UPLOAD_SIZE_MB`. The R2 frontend flow uses direct PUT for media and files.
+For deployment, keep the bucket private. Signed upload URLs expire after 3600 seconds (`STORAGE_PRESIGNED_URL_TTL`); signed download URLs retain a 15-minute default (`STORAGE_PRESIGNED_DOWNLOAD_URL_TTL`). The legacy server-proxied upload endpoint remains capped by `MAX_UPLOAD_SIZE_MB`; the R2 browser flow uploads directly to storage. Backend secrets may use either the existing `STORAGE_*` names or `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`; do not expose credentials in frontend variables.
 
 ## Razorpay Test Mode
 
@@ -169,9 +169,10 @@ These credentials are for a disposable demo database only. Do not use them for r
 | `CORS_ORIGINS` | No | JSON array of explicit browser origins; wildcard is rejected |
 | `UPLOAD_DIR` | No | Local upload directory (default `./uploads`) |
 | `STORAGE_ENDPOINT_URL`, `STORAGE_REGION` | For R2 | Canonical R2 S3-compatible endpoint and region (`auto`) |
-| `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET` | For R2 | Backend-only credentials and canonical private bucket name |
-| `STORAGE_ACCOUNT_ID` | Optional | Used only to derive the R2 endpoint if `STORAGE_ENDPOINT_URL` is unset |
-| `STORAGE_PRESIGNED_URL_TTL` | No | Presigned download lifetime in seconds (default 900, max 3600) |
+| `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET` (or `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`) | For R2 | Backend-only credentials and canonical private bucket name |
+| `STORAGE_ACCOUNT_ID` (or `R2_ACCOUNT_ID`) | Optional | Used only to derive the R2 endpoint if `STORAGE_ENDPOINT_URL` is unset |
+| `STORAGE_PRESIGNED_URL_TTL` | No | Presigned upload URL lifetime in seconds (fixed at 3600) |
+| `STORAGE_PRESIGNED_DOWNLOAD_URL_TTL` | No | Presigned download URL lifetime (default 900, max 3600) |
 | `STORAGE_UPLOAD_GRANT_TTL` | No | Time allowed to complete an authorized upload (default 86400 seconds) |
 | `MAX_UPLOAD_SIZE_MB` | No | Maximum upload size (default 50 MB) |
 | `MAX_VIDEO_SIZE_MB`, `MAX_IMAGE_SIZE_MB` | No | Direct upload limits (defaults 2048 MB and 10 MB) |

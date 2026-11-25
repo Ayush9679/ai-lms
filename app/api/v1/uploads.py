@@ -49,7 +49,12 @@ async def complete_upload(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     service = UploadService(db)
-    result = await service.complete(request.upload_token, current_user.id, current_user.role)
+    result = await service.complete(
+        request.upload_token,
+        current_user.id,
+        current_user.role,
+        [part.model_dump() for part in request.parts],
+    )
     await db.commit()
     await service.cleanup_retired_objects()
     return {

@@ -12,10 +12,30 @@ class FakeStorage:
         self.head_keys = []
         self.deleted = []
         self.objects = {}
+        self.multipart_uploads = {}
+        self.completed_parts = {}
+        self.aborted_uploads = []
 
     async def presign_put(self, key, mime_type, size_bytes, expires_in):
         self.objects[key] = {"mime_type": mime_type, "size": size_bytes}
         return f"https://private-r2.test/{key}?signed=put"
+
+    async def create_multipart_upload(self, key, mime_type):
+        upload_id = f"multipart-{len(self.multipart_uploads) + 1}"
+        self.multipart_uploads[key] = {"upload_id": upload_id, "mime_type": mime_type}
+        return upload_id
+
+    async def presign_upload_part(self, key, upload_id, part_number, expires_in):
+        return f"https://private-r2.test/{key}?part={part_number}"
+
+    async def complete_multipart_upload(self, key, upload_id, parts):
+        self.completed_parts[key] = parts
+
+    async def abort_multipart_upload(self, key, upload_id):
+        self.aborted_uploads.append((key, upload_id))
+
+    async def set_uploaded_object(self, key, mime_type, size_bytes):
+        self.objects[key] = {"mime_type": mime_type, "size": size_bytes}
 
     async def head(self, key):
         self.head_keys.append(key)
@@ -86,6 +106,7 @@ async def test_presigned_video_upload_verifies_object_and_cancellation_does_not_
     )
     assert start.status_code == 200
     grant = start.json()
+    assert grant["upload_method"] == "put"
     assert "key" not in grant and "object_key" not in grant
     lesson = await db.get(Lesson, uuid.UUID(lesson_id))
     assert lesson.video_status == "uploading"
@@ -126,6 +147,131 @@ async def test_presigned_video_upload_verifies_object_and_cancellation_does_not_
         headers=headers,
     )
     assert stale_completion.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_multipart_video_is_not_ready_until_verified_and_cancellation_aborts(
+    client: AsyncClient, db, monkeypatch
+):
+    fake_storage = FakeStorage()
+    monkeypatch.setattr(upload_service, "get_object_storage", lambda: fake_storage)
+    token = await register_teacher(client, "multipart_upload_owner@test.com")
+    headers = {"Authorization": "Bearer " + token}
+    course = await client.post(
+        "/api/v1/courses/", json={"title": "Multipart Course"}, headers=headers
+    )
+    assert course.status_code == 201, course.text
+    lesson_response = await client.post(
+        f"/api/v1/courses/{course.json()['id']}/lessons",
+        json={"title": "Multipart Lesson"},
+        headers=headers,
+    )
+    lesson = await db.get(Lesson, uuid.UUID(lesson_response.json()["id"]))
+    size_bytes = 65 * 1024 * 1024
+    start = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": str(lesson.id),
+            "asset_type": "video",
+            "mime_type": "video/mp4",
+            "size_bytes": size_bytes,
+        },
+        headers=headers,
+    )
+    assert start.status_code == 200
+    grant = start.json()
+    assert grant["upload_method"] == "multipart"
+    assert grant["part_size_bytes"] == 64 * 1024 * 1024
+    assert [part["part_number"] for part in grant["parts"]] == [1, 2]
+    assert lesson.video_status == "uploading"
+    assert lesson.video_url is None
+
+    key = next(iter(fake_storage.multipart_uploads))
+    await fake_storage.set_uploaded_object(key, "video/mp4", size_bytes)
+    complete = await client.post(
+        "/api/v1/uploads/complete",
+        json={
+            "upload_token": grant["upload_token"],
+            "parts": [
+                {"part_number": 1, "etag": '"part-one"'},
+                {"part_number": 2, "etag": '"part-two"'},
+            ],
+        },
+        headers=headers,
+    )
+    assert complete.status_code == 200
+    assert complete.json()["status"] == "ready"
+    assert fake_storage.completed_parts[key] == [
+        {"PartNumber": 1, "ETag": '"part-one"'},
+        {"PartNumber": 2, "ETag": '"part-two"'},
+    ]
+    assert lesson.video_status == "ready"
+    assert lesson.video_url == f"r2://{key}"
+
+    existing_multipart_keys = set(fake_storage.multipart_uploads)
+    cancel_start = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": str(lesson.id),
+            "asset_type": "video",
+            "mime_type": "video/mp4",
+            "size_bytes": size_bytes,
+        },
+        headers=headers,
+    )
+    cancel_grant = cancel_start.json()
+    cancel_key = next(key for key in fake_storage.multipart_uploads if key not in existing_multipart_keys)
+    canceled = await client.post(
+        "/api/v1/uploads/cancel",
+        json={"upload_token": cancel_grant["upload_token"]},
+        headers=headers,
+    )
+    assert canceled.status_code == 200
+    assert cancel_key in [key for key, _ in fake_storage.aborted_uploads]
+    assert lesson.video_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_lesson_upload_only_allows_mp4_and_pdf_and_limits_pdf_to_2048_mb(client: AsyncClient):
+    token = await register_teacher(client, "upload_validation_owner@test.com")
+    headers = {"Authorization": "Bearer " + token}
+    course = await client.post(
+        "/api/v1/courses/", json={"title": "Validation Course"}, headers=headers
+    )
+    assert course.status_code == 201, course.text
+    lesson = await client.post(
+        f"/api/v1/courses/{course.json()['id']}/lessons",
+        json={"title": "Validation Lesson"},
+        headers=headers,
+    )
+
+    webm = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": lesson.json()["id"],
+            "asset_type": "video",
+            "mime_type": "video/webm",
+            "size_bytes": 100,
+        },
+        headers=headers,
+    )
+    assert webm.status_code == 415
+
+    large_pdf = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": lesson.json()["id"],
+            "asset_type": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 2048 * 1024 * 1024 + 1,
+        },
+        headers=headers,
+    )
+    assert large_pdf.status_code == 422
 
 
 @pytest.mark.asyncio
