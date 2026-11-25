@@ -67,13 +67,13 @@ POSTGRES_ENUMS = (
 )
 
 
-def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM) -> bool:
+def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM, offline: bool = False) -> bool:
     """Create a missing public enum, or validate and reuse the existing type.
 
     Returns True when this migration creates the type. A same-named non-enum
     object or enum with different labels is an error; neither case is ignored.
     """
-    if context.is_offline_mode():
+    if offline:
         # Offline generation has no database catalog to inspect. Emit the
         # enum DDL; the online path below remains responsible for validating
         # pre-existing enum types before a real migration runs.
@@ -115,8 +115,8 @@ def _ensure_postgresql_enum(bind, enum_type: postgresql.ENUM) -> bool:
     return False
 
 
-def _require_public_schema(bind) -> None:
-    if context.is_offline_mode():
+def _require_public_schema(bind, offline: bool = False) -> None:
+    if offline:
         # The online migration validates the selected schema against the
         # live connection. Offline SQL has no scalar result to inspect.
         return
@@ -136,9 +136,21 @@ def upgrade() -> None:
     bind = op.get_bind()
     is_postgresql = bind.dialect.name == "postgresql"
     if is_postgresql:
-        _require_public_schema(bind)
+        try:
+            offline = context.is_offline_mode()
+        except NameError:
+            # Unit tests can invoke upgrade() through Operations.context
+            # without the global EnvironmentContext proxy.
+            offline = False
+        if offline:
+            _require_public_schema(bind, offline=True)
+        else:
+            _require_public_schema(bind)
         for enum_type in POSTGRES_ENUMS:
-            _ensure_postgresql_enum(bind, enum_type)
+            if offline:
+                _ensure_postgresql_enum(bind, enum_type, offline=True)
+            else:
+                _ensure_postgresql_enum(bind, enum_type)
 
     # ==========================================================================
     # users
