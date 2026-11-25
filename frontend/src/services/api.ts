@@ -1,3 +1,4 @@
+import axios from "axios";
 import { apiClient, clearTokens, setTokens } from "@/lib/api-client";
 import {
   User,
@@ -23,13 +24,98 @@ import {
   AdminDashboardData,
 } from "@/types";
 
-interface PresignedUploadGrant {
+interface PresignedUploadPart {
+  part_number: number;
   upload_url: string;
+}
+
+interface PresignedUploadGrant {
+  upload_method: "put" | "multipart";
+  upload_url?: string;
+  parts: PresignedUploadPart[];
+  part_size_bytes?: number | null;
   upload_token: string;
   expires_in: number;
 }
 
 type UploadProgress = (percent: number) => void;
+
+export const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (axios.isAxiosError(error)) {
+    const detail: unknown = error.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("; ") || fallback;
+  }
+  return error instanceof Error ? error.message : fallback;
+};
+
+const MULTIPART_CHUNK_SIZE_DEFAULT = 64 * 1024 * 1024;
+
+function putToSignedUrl(
+  url: string,
+  body: Blob,
+  contentType: string,
+  signal?: AbortSignal,
+  onProgress?: UploadProgress,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    const request = new XMLHttpRequest();
+    const abortUpload = () => request.abort();
+    request.open("PUT", url);
+    request.setRequestHeader("Content-Type", contentType);
+    request.setRequestHeader("If-None-Match", "*");
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onload = () => {
+      const etag = request.getResponseHeader("ETag");
+      signal?.removeEventListener("abort", abortUpload);
+      if (request.status >= 200 && request.status < 300) resolve(etag);
+      else reject(new Error(`Storage upload failed (HTTP ${request.status}). Check bucket CORS and retry.`));
+    };
+    request.onerror = () => {
+      signal?.removeEventListener("abort", abortUpload);
+      reject(new Error("Storage upload failed. Check bucket CORS and your connection, then retry."));
+    };
+    request.onabort = () => {
+      signal?.removeEventListener("abort", abortUpload);
+      reject(new DOMException("Upload cancelled", "AbortError"));
+    };
+    signal?.addEventListener("abort", abortUpload, { once: true });
+    request.send(body);
+  });
+}
+
+async function multipartUpload(
+  grant: PresignedUploadGrant,
+  file: File,
+  signal?: AbortSignal,
+  onProgress?: UploadProgress,
+): Promise<Array<{ part_number: number; etag: string }>> {
+  const partSize = grant.part_size_bytes || MULTIPART_CHUNK_SIZE_DEFAULT;
+  const uploaded: Array<{ part_number: number; etag: string }> = [];
+  let completedBytes = 0;
+  const total = Math.max(file.size, 1);
+  for (const part of grant.parts) {
+    if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
+    const start = (part.part_number - 1) * partSize;
+    const end = Math.min(start + partSize, file.size);
+    const blob = file.slice(start, end);
+    const bytesForPart = end - start;
+    const etag = await putToSignedUrl(part.upload_url, blob, file.type, signal, (partPercent) => {
+      onProgress?.(Math.round(((completedBytes + (partPercent / 100) * bytesForPart) / total) * 100));
+    });
+    if (!etag) throw new Error("Multipart upload returned no ETag. Retry the upload.");
+    uploaded.push({ part_number: part.part_number, etag });
+    completedBytes += bytesForPart;
+  }
+  if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
+  return uploaded;
+}
 
 async function directObjectUpload(
   resourceType: "course" | "lesson",
@@ -50,31 +136,17 @@ async function directObjectUpload(
   });
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new DOMException("Upload cancelled", "AbortError"));
-        return;
-      }
-      const request = new XMLHttpRequest();
-      request.open("PUT", grant.upload_url);
-      request.setRequestHeader("Content-Type", file.type);
-      request.setRequestHeader("If-None-Match", "*");
-      request.upload.onprogress = (event) => {
-        if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
-      };
-      request.onload = () => request.status >= 200 && request.status < 300
-        ? resolve()
-        : reject(new Error(`Storage upload failed (${request.status}). Retry the upload.`));
-      request.onerror = () => reject(new Error("Storage upload failed. Check your connection and retry."));
-      request.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
-      signal?.addEventListener("abort", () => request.abort(), { once: true });
-      if (signal?.aborted) request.abort();
-      else request.send(file);
-    });
+    const parts = grant.upload_method === "multipart"
+      ? await multipartUpload(grant, file, signal, onProgress)
+      : (await putToSignedUrl(grant.upload_url as string, file, file.type, signal, onProgress), []);
     if (signal?.aborted) throw new DOMException("Upload cancelled", "AbortError");
-    await apiClient.post("/uploads/complete", { upload_token: grant.upload_token });
+    await apiClient.post("/uploads/complete", { upload_token: grant.upload_token, parts });
   } catch (error) {
-    await apiClient.post("/uploads/cancel", { upload_token: grant.upload_token }).catch(() => undefined);
+    const aborted = error instanceof DOMException && error.name === "AbortError";
+    await apiClient.post("/uploads/cancel", {
+      upload_token: grant.upload_token,
+      ...(aborted ? {} : { failed: true }),
+    }).catch(() => undefined);
     throw error;
   }
 }
@@ -211,6 +283,11 @@ export const lessonService = {
     return res.data;
   },
 
+  async removeVideo(id: string): Promise<Lesson> {
+    const res = await apiClient.patch(`/lessons/${id}`, { video_url: null });
+    return res.data;
+  },
+
   async delete(id: string): Promise<{ message: string }> {
     const res = await apiClient.delete(`/lessons/${id}`);
     return res.data;
@@ -267,8 +344,16 @@ export const enrollmentService = {
   },
 
   async getStatus(courseId: string): Promise<{ is_enrolled: boolean; status?: string; progress?: number }> {
-    const res = await apiClient.get(`/enrollments/${courseId}/status`);
-    return res.data;
+    const { data } = await apiClient.get<(
+      Pick<Enrollment, "status" | "progress"> | { is_enrolled: boolean }
+    ) | null>(`/enrollments/${courseId}/status`, { timeout: 15_000 });
+    if (!data) return { is_enrolled: false };
+    if ("is_enrolled" in data) return data;
+    return {
+      is_enrolled: data.status === "active" || data.status === "completed",
+      status: data.status,
+      progress: data.progress,
+    };
   },
 };
 

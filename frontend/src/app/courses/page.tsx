@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { courseService } from "@/services/api";
+import { formatCoursePrice } from "@/lib/course-price";
 import { Header } from "@/components/shared/Header";
 import { Footer } from "@/components/shared/Footer";
 import { CourseCardSkeleton } from "@/components/shared/SkeletonLoaders";
@@ -153,7 +154,7 @@ export default function CoursesCatalogPage() {
                     </span>
                   </div>
                   <span className="text-sm font-black text-white">
-                    {course.price === 0 ? "Free" : `$${course.price}`}
+                    {formatCoursePrice(course.price)}
                   </span>
                 </div>
               </Link>

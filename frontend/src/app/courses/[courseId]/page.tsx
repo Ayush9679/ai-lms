@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { courseService, lessonService, enrollmentService, quizService, assignmentService, aiService } from "@/services/api";
@@ -9,7 +9,8 @@ import { Header } from "@/components/shared/Header";
 import { Footer } from "@/components/shared/Footer";
 import { TableSkeleton } from "@/components/shared/SkeletonLoaders";
 import { ParticlesBackground } from "@/components/3d/Particles";
-import { PageTransition } from "@/components/shared/PageTransitions";
+import { CourseCheckout } from "@/components/courses/CourseCheckout";
+import { formatCoursePrice } from "@/lib/course-price";
 import {
   BookOpen,
   GraduationCap,
@@ -21,18 +22,16 @@ import {
   FileText,
   Sparkles,
   MessageSquare,
-  Bookmark,
-  Award,
   BookMarked
 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 
 export default function CourseDetailsPage() {
-  const { courseId } = useParams();
+  const { courseId } = useParams<{ courseId: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"overview" | "lessons" | "assignments" | "quizzes" | "ai" | "discussions">("overview");
 
@@ -58,56 +57,61 @@ export default function CourseDetailsPage() {
   const [isGeneratingCards, setIsGeneratingCards] = useState(false);
 
   // Study plan states
-  const [generatedPlan, setGeneratedPlan] = useState<any | null>(null);
+  const [generatedPlan, setGeneratedPlan] = useState<string | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
   // Fetch Course details
   const { data: course, isLoading: courseLoading } = useQuery({
-    queryKey: ["courseDetails", courseId],
+    queryKey: ["courseDetails", courseId, user?.id],
     queryFn: () => courseService.getDetails(courseId as string),
   });
+  const isCourseManager = !!course && (course.instructor_id === user?.id || user?.role === "admin");
 
   // Fetch lessons
   const { data: lessons, isLoading: lessonsLoading } = useQuery({
-    queryKey: ["courseLessons", courseId],
+    queryKey: ["courseLessons", courseId, user?.id],
     queryFn: () => lessonService.listByCourse(courseId as string),
   });
 
   // Fetch Enrollment status
-  const { data: enrollmentStatus, isLoading: statusLoading } = useQuery({
-    queryKey: ["enrollmentStatus", courseId],
+  const { data: enrollmentStatus, isLoading: statusLoading, refetch: refetchEnrollment } = useQuery({
+    queryKey: ["enrollmentStatus", courseId, user?.id],
     queryFn: () => enrollmentService.getStatus(courseId as string),
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !!course && !isCourseManager,
   });
+  const isEnrolled = !!enrollmentStatus?.is_enrolled;
+  const hasCourseAccess = isCourseManager || isEnrolled;
 
   // Fetch quizzes
   const { data: quizzes, isLoading: quizzesLoading } = useQuery({
     queryKey: ["courseQuizzes", courseId],
     queryFn: () => quizService.listByCourse(courseId as string),
-    enabled: !!enrollmentStatus?.is_enrolled,
+    enabled: hasCourseAccess,
   });
 
   // Fetch assignments
   const { data: assignments, isLoading: assignmentsLoading } = useQuery({
     queryKey: ["courseAssignments", courseId],
     queryFn: () => assignmentService.listByCourse(courseId as string),
-    enabled: !!enrollmentStatus?.is_enrolled,
+    enabled: hasCourseAccess,
   });
 
-  // Enrollment mutation
+  const refreshCourseQueries = () => {
+    void queryClient.invalidateQueries({ queryKey: ["myEnrollments"] });
+    void queryClient.invalidateQueries({ queryKey: ["myCoursesList"] });
+    void queryClient.invalidateQueries({ queryKey: ["studentDashboard"] });
+    void queryClient.invalidateQueries({ queryKey: ["courseDetails", courseId] });
+    void queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
+  };
+
   const enrollMutation = useMutation({
-    mutationFn: () => enrollmentService.enroll(courseId as string),
+    mutationFn: () => enrollmentService.enroll(courseId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["enrollmentStatus", courseId] });
-      queryClient.invalidateQueries({ queryKey: ["myEnrollments"] });
-      queryClient.invalidateQueries({ queryKey: ["myCoursesList"] });
-      queryClient.invalidateQueries({ queryKey: ["studentDashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["courseDetails", courseId] });
-      queryClient.invalidateQueries({ queryKey: ["coursesCatalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["enrollmentStatus", courseId] });
+      refreshCourseQueries();
       toast.success("Successfully enrolled in course!");
     },
-    onError: (err: any) => {
-      console.error(err);
+    onError: () => {
       toast.error("Failed to enroll in the course.");
     },
   });
@@ -118,7 +122,9 @@ export default function CourseDetailsPage() {
       router.push("/login");
       return;
     }
-    enrollMutation.mutate();
+    if (user?.role === "student" && course?.status === "published" && course.price === 0) {
+      enrollMutation.mutate();
+    }
   };
 
   // AI Chat Submission
@@ -135,7 +141,7 @@ export default function CourseDetailsPage() {
       const res = await aiService.chat(userMsg, chatSessionId, courseId as string);
       setChatSessionId(res.session_id);
       setChatMessages((prev) => [...prev, { role: "model", content: res.ai_response }]);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       toast.error("Tutor connection lost. Please try again.");
     } finally {
@@ -154,7 +160,7 @@ export default function CourseDetailsPage() {
       );
       setGeneratedNote({ title: "AI Generated Course Guide", content: res.ai_response });
       toast.success("Notes generated successfully!");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       toast.error("Failed to generate course notes.");
     } finally {
@@ -179,7 +185,7 @@ export default function CourseDetailsPage() {
         } else {
           throw new Error("JSON boundaries not found");
         }
-      } catch (e) {
+      } catch {
         parsed = [
           { front: "Photosynthesis", back: "Process used by plants to convert light energy into chemical energy." },
           { front: "Mitochondria", back: "The powerhouse of the cell, generating chemical energy." },
@@ -217,48 +223,6 @@ export default function CourseDetailsPage() {
     }
   };
 
-  const getSyllabusAction = () => {
-    if (statusLoading) return null;
-    
-    const isEnrolled = enrollmentStatus?.is_enrolled;
-    
-    if (isEnrolled) {
-      // Find first lesson to play
-      const firstLessonId = lessons && lessons.length > 0 ? lessons[0].id : null;
-      if (firstLessonId) {
-        return (
-          <Link
-            href={`/courses/${courseId}/lessons/${firstLessonId}`}
-            className="glow-btn w-full py-4 text-sm font-bold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-2xl flex items-center justify-center gap-1.5 shadow-lg shadow-purple-500/10 cursor-pointer"
-          >
-            Continue Learning
-            <ChevronRight className="w-4 h-4" />
-          </Link>
-        );
-      } else {
-        return (
-          <button
-            disabled
-            className="w-full py-4 text-sm font-bold bg-zinc-900 text-zinc-500 border border-zinc-800 rounded-2xl flex items-center justify-center gap-1.5 cursor-not-allowed"
-          >
-            Already Enrolled (No Lessons)
-          </button>
-        );
-      }
-    }
-
-    return (
-      <button
-        onClick={handleEnrollment}
-        disabled={enrollMutation.isPending}
-        className="glow-btn w-full py-4 text-sm font-bold bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white rounded-2xl flex items-center justify-center gap-1.5 shadow-lg shadow-purple-500/10 cursor-pointer"
-      >
-        {enrollMutation.isPending ? "Processing..." : course?.price === 0 ? "Enroll Free" : `Enroll for $${course?.price}`}
-        <ChevronRight className="w-4 h-4" />
-      </button>
-    );
-  };
-
   if (courseLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -269,7 +233,70 @@ export default function CourseDetailsPage() {
 
   if (!course) return null;
 
-  const isEnrolled = enrollmentStatus?.is_enrolled;
+  const isOwner = user?.role === "teacher" && user.id === course.instructor_id;
+  const canPreview = isOwner || user?.role === "admin";
+  const isPaid = course.price > 0;
+  const courseActionClass = "glow-btn flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-500 py-4 text-sm font-bold text-white hover:from-purple-500 hover:to-blue-400 disabled:opacity-60";
+  const firstLesson = lessons?.[0];
+  const enrolledAction = firstLesson ? (
+    <Link href={`/courses/${courseId}/lessons/${firstLesson.id}`} className={courseActionClass}>
+      Continue Learning <ChevronRight aria-hidden="true" className="h-4 w-4" />
+    </Link>
+  ) : <p className="text-sm text-zinc-400">Enrolled. Lessons will appear here when available.</p>;
+
+  function getSyllabusAction() {
+    if (!course || authLoading || statusLoading) return null;
+    if (canPreview) {
+      return (
+        <div className="flex flex-col gap-3">
+          {firstLesson && (
+            <Link href={`/courses/${courseId}/lessons/${firstLesson.id}`} className={courseActionClass}>
+              Preview Lesson
+            </Link>
+          )}
+          {isOwner && (
+            <Link href={`/dashboard/teacher/courses/${courseId}`} className="text-center text-sm font-semibold text-purple-400 hover:text-purple-300">
+              Manage Course
+            </Link>
+          )}
+        </div>
+      );
+    }
+    if (course.status !== "published") return null;
+    if (isPaid && user?.role === "student") {
+      return (
+        <CourseCheckout
+          key={`${user.id}:${courseId}`}
+          courseId={courseId}
+          courseTitle={course.title}
+          studentId={user.id}
+          isEnrolled={isEnrolled}
+          enrolledAction={enrolledAction}
+          refreshEnrollment={async () => {
+            const { data } = await refetchEnrollment({ throwOnError: true, cancelRefetch: false });
+            return data?.is_enrolled === true;
+          }}
+          onConfirmed={() => {
+            void queryClient.invalidateQueries({ queryKey: ["enrollmentStatus", courseId], refetchType: "none" });
+            refreshCourseQueries();
+            toast.success("Course access confirmed.");
+            router.replace(`/courses/${courseId}`);
+          }}
+        />
+      );
+    }
+    if (isEnrolled) return enrolledAction;
+    if (!user && isPaid) {
+      return <Link href="/login" className={courseActionClass}>Sign in to buy</Link>;
+    }
+    if (user && user.role !== "student") return null;
+    return (
+      <button type="button" onClick={handleEnrollment} disabled={enrollMutation.isPending} className={courseActionClass}>
+        {enrollMutation.isPending ? "Enrolling…" : "Enroll Free"}
+        <ChevronRight aria-hidden="true" className="h-4 w-4" />
+      </button>
+    );
+  }
 
   return (
     <div className="min-h-screen relative flex flex-col justify-between overflow-x-hidden">
@@ -286,33 +313,33 @@ export default function CourseDetailsPage() {
             <h1 className="text-3xl sm:text-4xl font-extrabold text-white mt-4 leading-snug">{course.title}</h1>
             <p className="text-zinc-400 text-sm mt-3 max-w-3xl leading-relaxed">{course.description}</p>
           </div>
-          {isEnrolled && (
+          {hasCourseAccess && (
             <div className="p-3 bg-purple-950/25 border border-purple-500/15 rounded-2xl flex items-center gap-2.5 w-fit h-fit">
               <BookMarked className="w-5 h-5 text-purple-400" />
               <div>
                 <p className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Access level</p>
-                <p className="text-xs font-bold text-white mt-0.5">Enrolled Student</p>
+                <p className="text-xs font-bold text-white mt-0.5">{isCourseManager ? "Instructor preview" : isPaid ? "Enrolled · Paid Course" : "Enrolled Student"}</p>
               </div>
             </div>
           )}
         </div>
 
         {/* Tab Headers if enrolled */}
-        {isEnrolled && (
+        {hasCourseAccess && (
           <div className="flex border-b border-zinc-800/80 mb-6 flex-wrap">
-            {[
+            {([
               { id: "overview", name: "Overview", icon: BookOpen },
               { id: "lessons", name: "Lessons", icon: GraduationCap },
               { id: "assignments", name: "Assignments", icon: FileText },
               { id: "quizzes", name: "Quizzes", icon: Trophy },
               { id: "ai", name: "AI Study Copilot", icon: Sparkles },
               { id: "discussions", name: "Resources & Board", icon: MessageSquare },
-            ].map((tab) => {
+            ] as const).map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
+                  onClick={() => setActiveTab(tab.id)}
                   className={`py-3 px-5 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer ${
                     activeTab === tab.id
                       ? "border-purple-500 text-purple-400"
@@ -333,7 +360,7 @@ export default function CourseDetailsPage() {
           <div className="lg:col-span-2 flex flex-col gap-6">
             
             {/* Overview / Purchase View (or active Tab contents) */}
-            {(!isEnrolled || activeTab === "overview") && (
+            {(!hasCourseAccess || activeTab === "overview") && (
               <div className="flex flex-col gap-6">
                 <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                   <h3 className="text-base font-bold text-white">Course Summary & Core Value</h3>
@@ -381,7 +408,7 @@ export default function CourseDetailsPage() {
                             </div>
                           </div>
                           
-                          {isEnrolled && (
+                          {hasCourseAccess && (
                             <Link
                               href={`/courses/${courseId}/lessons/${lesson.id}`}
                               className="p-1.5 bg-zinc-900 border border-zinc-800 hover:border-purple-500/20 text-zinc-400 hover:text-purple-400 rounded-lg transition"
@@ -399,7 +426,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "lessons" && (
+            {hasCourseAccess && activeTab === "lessons" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Syllabus curriculum units</h3>
                 {lessonsLoading ? (
@@ -435,7 +462,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "assignments" && (
+            {hasCourseAccess && activeTab === "assignments" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Required Course Assignments</h3>
                 {assignmentsLoading ? (
@@ -468,7 +495,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "quizzes" && (
+            {hasCourseAccess && activeTab === "quizzes" && (
               <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
                 <h3 className="text-base font-bold text-white">Course Quizzes</h3>
                 {quizzesLoading ? (
@@ -501,7 +528,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "ai" && (
+            {hasCourseAccess && activeTab === "ai" && (
               <div className="flex flex-col gap-6">
                 {/* AI Selector Header */}
                 <div className="flex items-center justify-between bg-zinc-950/45 border border-zinc-900 rounded-2xl p-4">
@@ -511,7 +538,7 @@ export default function CourseDetailsPage() {
                   </h3>
                   <select
                     value={aiWorkspace}
-                    onChange={(e) => setAiWorkspace(e.target.value as any)}
+                    onChange={(e) => setAiWorkspace(e.target.value as typeof aiWorkspace)}
                     className="bg-zinc-900 border border-zinc-800 text-white rounded-xl px-2.5 py-1.5 text-xs font-semibold focus:outline-none"
                   >
                     <option value="chat">Chat with AI Tutor</option>
@@ -688,7 +715,7 @@ export default function CourseDetailsPage() {
               </div>
             )}
 
-            {isEnrolled && activeTab === "discussions" && (
+            {hasCourseAccess && activeTab === "discussions" && (
               <div className="flex flex-col gap-6">
                 {/* Resources */}
                 <div className="glass-card rounded-3xl p-6 flex flex-col gap-4">
@@ -730,7 +757,7 @@ export default function CourseDetailsPage() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-zinc-400 font-medium">Access Tier</span>
                 <span className="text-2xl font-black text-white">
-                  {course.price === 0 ? "Free" : `$${course.price}`}
+                  {formatCoursePrice(course.price)}
                 </span>
               </div>
 

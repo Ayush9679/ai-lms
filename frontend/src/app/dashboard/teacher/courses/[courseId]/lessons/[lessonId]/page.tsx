@@ -61,6 +61,16 @@ function LessonEditor({ lesson, courseId, lessonId }: { lesson: Lesson; courseId
     },
     onError: () => toast.error("Could not delete the lesson."),
   });
+  const removeVideoMutation = useMutation({
+    mutationFn: () => lessonService.removeVideo(lessonId),
+    onSuccess: async (updatedLesson) => {
+      queryClient.setQueryData(["lesson", lessonId], updatedLesson);
+      queryClient.setQueryData(["lessonDetails", lessonId], updatedLesson);
+      await queryClient.invalidateQueries({ queryKey: ["courseLessons", courseId] });
+      toast.success("Lesson video removed.");
+    },
+    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Could not remove the lesson video."),
+  });
   const thumbnailMutation = useMutation({
     mutationFn: ({ file, signal }: { file: File; signal: AbortSignal }) =>
       lessonService.uploadThumbnail(lessonId, file, signal),
@@ -87,6 +97,16 @@ function LessonEditor({ lesson, courseId, lessonId }: { lesson: Lesson; courseId
         <button type="button" onClick={() => { if (confirm("Delete this lesson?")) deleteMutation.mutate(); }} disabled={deleteMutation.isPending} className="rounded-xl border border-red-900/40 p-3 text-red-400" aria-label="Delete lesson"><Trash className="h-4 w-4" /></button>
       </div>
       <form onSubmit={(event) => { event.preventDefault(); saveMutation.mutate(); }} className="glass-card flex flex-col gap-4 rounded-3xl p-6">
+        {lesson.thumbnail && <img src={lesson.thumbnail} alt={`${lesson.title} lesson thumbnail`} className="max-h-48 w-fit rounded-xl border border-zinc-800 object-cover" />}
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-950/40 p-4" aria-label="Lesson video">
+          <h2 className="mb-3 text-sm font-bold text-white">Lesson video</h2>
+          {lesson.video_url ? <video src={lesson.video_url} controls className="mb-3 w-full rounded-xl bg-black" /> : <p className="mb-3 text-xs text-zinc-400">No video is saved. Upload one to enable lesson playback.</p>}
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href={`/dashboard/teacher/courses/${courseId}/lessons/${lessonId}/upload`} className="rounded-xl border border-purple-500/40 px-4 py-2 text-xs font-semibold text-purple-200">{lesson.video_url ? "Replace video" : "Upload video"}</Link>
+            {lesson.video_url && <button type="button" onClick={() => { if (confirm("Remove this lesson video?")) removeVideoMutation.mutate(); }} disabled={removeVideoMutation.isPending} className="flex items-center gap-2 rounded-xl border border-red-900/50 px-4 py-2 text-xs text-red-300 disabled:opacity-50"><Trash className="h-3.5 w-3.5" />{removeVideoMutation.isPending ? "Removing…" : "Remove video"}</button>}
+            {lesson.video_status && <span className="text-xs text-zinc-400">Video status: {lesson.video_status}</span>}
+          </div>
+        </section>
         <div className="flex items-center gap-3">
           <label className="cursor-pointer rounded-xl border border-zinc-800 px-4 py-3 text-sm text-zinc-300">
             {thumbnailMutation.isPending ? "Uploading thumbnail…" : lesson.thumbnail ? "Replace lesson thumbnail" : "Upload lesson thumbnail"}

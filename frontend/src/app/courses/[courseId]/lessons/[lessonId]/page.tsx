@@ -40,7 +40,7 @@ export default function LessonPlayerPage() {
   const { courseId, lessonId } = useParams();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
   // Tabs for the main area
   const [playerTab, setPlayerTab] = useState<"content" | "discussions" | "quizzes" | "assignments">("content");
@@ -69,35 +69,38 @@ export default function LessonPlayerPage() {
   const [generatedPlan, setGeneratedPlan] = useState<any | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
-  // Enrollment guard
-  const { data: enrollmentStatus, isLoading: enrollmentLoading } = useQuery({
-    queryKey: ["enrollmentStatus", courseId],
-    queryFn: () => enrollmentService.getStatus(courseId as string),
-    enabled: isAuthenticated,
-  });
-
   // Fetch Course details
   const { data: course } = useQuery({
-    queryKey: ["courseDetails", courseId],
+    queryKey: ["courseDetails", courseId, user?.id],
     queryFn: () => courseService.getDetails(courseId as string),
+    enabled: isAuthenticated,
+  });
+  const isCourseManager = !!course && (course.instructor_id === user?.id || user?.role === "admin");
+  const { data: enrollmentStatus, isLoading: enrollmentLoading } = useQuery({
+    queryKey: ["enrollmentStatus", courseId, user?.id],
+    queryFn: () => enrollmentService.getStatus(courseId as string),
+    enabled: isAuthenticated && !!course && !isCourseManager,
   });
 
   // Fetch current lesson
   const { data: lesson, isLoading: lessonLoading } = useQuery({
-    queryKey: ["lessonDetails", lessonId],
+    queryKey: ["lessonDetails", lessonId, user?.id],
     queryFn: () => lessonService.getDetails(lessonId as string),
+    enabled: isAuthenticated,
   });
 
   // Fetch lessons list
   const { data: lessons } = useQuery({
-    queryKey: ["courseLessons", courseId],
+    queryKey: ["courseLessons", courseId, user?.id],
     queryFn: () => lessonService.listByCourse(courseId as string),
+    enabled: isAuthenticated,
   });
 
   // Fetch lesson progress
   const { data: progress } = useQuery({
-    queryKey: ["lessonProgress", lessonId],
+    queryKey: ["lessonProgress", lessonId, user?.id],
     queryFn: () => lessonService.getProgress(lessonId as string),
+    enabled: isAuthenticated && !isCourseManager && !!enrollmentStatus?.is_enrolled,
   });
 
   // Fetch quizzes
@@ -112,16 +115,17 @@ export default function LessonPlayerPage() {
     queryFn: () => assignmentService.listByCourse(courseId as string),
   });
 
-  // Redirect if not authenticated or not enrolled
+  // Student access requires enrollment. The lesson endpoint authorizes staff previews.
   useEffect(() => {
+    if (authLoading) return;
     if (!isAuthenticated) {
       router.replace("/login");
       return;
     }
-    if (!enrollmentLoading && enrollmentStatus && !enrollmentStatus.is_enrolled) {
+    if (course && !isCourseManager && !enrollmentLoading && enrollmentStatus && !enrollmentStatus.is_enrolled) {
       router.replace(`/courses/${courseId}`);
     }
-  }, [isAuthenticated, enrollmentLoading, enrollmentStatus, courseId, router]);
+  }, [authLoading, isAuthenticated, isCourseManager, course, enrollmentLoading, enrollmentStatus, courseId, router]);
 
   // Mutation for updating progress completeness
   const progressMutation = useMutation({
@@ -229,7 +233,7 @@ export default function LessonPlayerPage() {
     toast.success("Copied to clipboard!");
   };
 
-  if (lessonLoading) {
+  if (authLoading || lessonLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
@@ -265,7 +269,7 @@ export default function LessonPlayerPage() {
               </div>
             </div>
 
-            <button
+            {!isCourseManager && <button
               onClick={() => progressMutation.mutate(!progress?.is_completed)}
               disabled={progressMutation.isPending}
               className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-semibold border transition cursor-pointer ${
@@ -276,7 +280,7 @@ export default function LessonPlayerPage() {
             >
               <CheckCircle2 className={`w-4 h-4 ${progress?.is_completed ? "text-purple-400 fill-purple-400/20" : ""}`} />
               {progress?.is_completed ? "Lesson Completed" : "Mark as Completed"}
-            </button>
+            </button>}
           </div>
 
           {/* Media Player Layer */}
