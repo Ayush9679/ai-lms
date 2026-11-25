@@ -239,6 +239,9 @@ def test_sqlite_upgrade_creates_all_expected_tables(tmp_path):
         "flashcard_sets",
         "user_activities",
         "course_analytics",
+        "payment_orders",
+        "payments",
+        "webhook_events",
         "alembic_version",
     }
     with sqlite3.connect(database_path) as connection:
@@ -259,5 +262,5 @@ def test_sqlite_upgrade_creates_all_expected_tables(tmp_path):
             for table in expected_tables
             if table != "alembic_version"
         )
-    assert len(explicit_indexes) == 32
-    assert foreign_key_count == 36
+    assert len(explicit_indexes) == 33
+    assert foreign_key_count == 39

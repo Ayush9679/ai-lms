@@ -46,6 +46,7 @@ class LessonResponse(BaseSchema):
     content: str | None
     video_url: str | None
     video_status: str = "pending"
+    video_size_bytes: int | None = None
     pdf_url: str | None
     transcript: str | None
     duration_minutes: int | None

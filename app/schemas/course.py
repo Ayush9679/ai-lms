@@ -4,6 +4,8 @@ AI-LMS Course Schemas — course CRUD, file attachments, and search.
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field
 
@@ -19,6 +21,8 @@ class CreateCourseRequest(BaseSchema):
     description: str | None = Field(default=None, max_length=10000)
     category: str | None = Field(default=None, max_length=100, examples=["Programming"])
     level: CourseLevel = Field(default=CourseLevel.beginner)
+    price: Decimal = Field(default=Decimal("0.00"), ge=0, max_digits=10, decimal_places=2)
+    currency: Literal["INR"] = "INR"
     tags: str | None = Field(
         default=None, max_length=1000, examples=["python,beginner,programming"]
     )
@@ -32,6 +36,11 @@ class UpdateCourseRequest(BaseSchema):
     category: str | None = Field(default=None, max_length=100)
     level: CourseLevel | None = None
     status: CourseStatus | None = None
+    price: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    currency: Literal["INR"] | None = None
+    # Clearing is supported for the existing PATCH {"thumbnail": null} contract.
+    # Clients cannot set an arbitrary storage key or URL.
+    thumbnail: None = None
     tags: str | None = None
 
 
@@ -60,6 +69,7 @@ class CourseResponse(BaseSchema):
     status: CourseStatus
     thumbnail: str | None
     price: float
+    currency: str = "INR"
     tags: str | None
     instructor: UserSummary
     instructor_id: uuid.UUID
@@ -81,6 +91,7 @@ class CourseSummary(BaseSchema):
     status: CourseStatus
     thumbnail: str | None
     price: float
+    currency: str = "INR"
     instructor_name: str
     total_lessons: int = 0
     total_students: int = 0

@@ -74,6 +74,7 @@ async def get_my_enrollments(
                 status=e.course.status,
                 thumbnail=e.course.thumbnail,
                 price=float(e.course.price),
+                currency=e.course.currency,
                 instructor_name=e.course.instructor.full_name if e.course.instructor else "Unknown",
                 total_lessons=0,
                 total_students=0,

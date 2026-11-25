@@ -16,12 +16,14 @@ from app.repositories.course_repo import CourseRepository
 from app.repositories.enrollment_repo import EnrollmentRepository
 from app.repositories.lesson_repo import LessonProgressRepository, LessonRepository
 from app.schemas.lesson import CreateLessonRequest, LessonProgressUpdate, UpdateLessonRequest
+from app.services.payment_service import has_captured_payment
 
 logger = get_logger(__name__)
 
 
 class LessonService:
     def __init__(self, db: AsyncSession) -> None:
+        self.db = db
         self.repo = LessonRepository(db)
         self.progress_repo = LessonProgressRepository(db)
         self.course_repo = CourseRepository(db)
@@ -97,14 +99,14 @@ class LessonService:
             return lesson
         if course.status != CourseStatus.published or not lesson.is_published:
             raise NotFoundError("Lesson", str(lesson_id))
-        if course.price > 0:
-            raise ForbiddenError("Paid course media requires a completed purchase")
         enrollment = await self.enrollment_repo.get_by_student_and_course(requester_id, course.id)
         if not enrollment or enrollment.status not in {
             EnrollmentStatus.active,
             EnrollmentStatus.completed,
         }:
             raise ForbiddenError("You must be enrolled to view this lesson")
+        if course.price > 0 and not await has_captured_payment(self.db, requester_id, course.id):
+            raise ForbiddenError("Paid course media requires a completed purchase")
         return lesson
 
     async def update_lesson(
@@ -124,6 +126,8 @@ class LessonService:
         if "video_url" in update_data and update_data["video_url"] != lesson.video_url:
             update_data["video_status"] = "pending"
             update_data["video_upload_id"] = None
+            if update_data["video_url"] is None:
+                update_data["video_size_bytes"] = None
         return await self.repo.update(lesson, **update_data)
 
     async def delete_lesson(
@@ -148,9 +152,9 @@ class LessonService:
         if (
             course.status != CourseStatus.published
             or not lesson.is_published
-            or course.price > 0
             or not enrollment
             or enrollment.status not in {EnrollmentStatus.active, EnrollmentStatus.completed}
+            or (course.price > 0 and not await has_captured_payment(self.db, user_id, course.id))
         ):
             raise ForbiddenError("You must be enrolled to update lesson progress")
 

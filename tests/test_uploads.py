@@ -11,13 +11,30 @@ class FakeStorage:
     def __init__(self):
         self.head_keys = []
         self.deleted = []
+        self.objects = {}
 
     async def presign_put(self, key, mime_type, size_bytes, expires_in):
+        self.objects[key] = {"mime_type": mime_type, "size": size_bytes}
         return f"https://private-r2.test/{key}?signed=put"
 
     async def head(self, key):
         self.head_keys.append(key)
-        return {"ContentLength": 123, "ContentType": "video/mp4"}
+        obj = self.objects[key]
+        return {"ContentLength": obj["size"], "ContentType": obj["mime_type"]}
+
+    async def read_prefix(self, key, length=32):
+        if "prefix" in self.objects[key]:
+            return self.objects[key]["prefix"][:length]
+        mime_type = self.objects[key]["mime_type"]
+        signatures = {
+            "video/mp4": b"\x00\x00\x00\x18ftypisom",
+            "image/png": b"\x89PNG\r\n\x1a\n",
+            "image/jpeg": b"\xff\xd8\xff\xe0",
+            "image/webp": b"RIFF\x00\x00\x00\x00WEBP",
+            "image/gif": b"GIF89a",
+            "application/pdf": b"%PDF-1.7",
+        }
+        return signatures[mime_type][:length]
 
     async def delete(self, key):
         self.deleted.append(key)
@@ -82,6 +99,7 @@ async def test_presigned_video_upload_verifies_object_and_cancellation_does_not_
     assert complete.json()["status"] == "ready"
     assert lesson.video_status == "ready"
     assert lesson.video_url == f"r2://{fake_storage.head_keys[0]}"
+    assert lesson.video_size_bytes == 123
 
     second = await client.post(
         "/api/v1/uploads/presign",
@@ -155,6 +173,74 @@ async def test_paid_course_media_is_denied_without_purchase_support(client, db):
 
 
 @pytest.mark.asyncio
+async def test_course_thumbnail_upload_persists_replaces_and_clears_private_object(
+    client: AsyncClient, db, monkeypatch
+):
+    fake_storage = FakeStorage()
+    monkeypatch.setattr(upload_service, "get_object_storage", lambda: fake_storage)
+    from app.services import file_service
+    from app.api.v1 import courses as courses_api
+
+    monkeypatch.setattr(file_service, "get_object_storage", lambda: fake_storage)
+    monkeypatch.setattr(courses_api, "get_object_storage", lambda: fake_storage)
+
+    async def signed_url(self, stored_path):
+        if stored_path and stored_path.startswith("r2://"):
+            return f"https://private-r2.test/get/{stored_path.removeprefix('r2://')}?signed=get"
+        return stored_path
+
+    monkeypatch.setattr(courses_api.FileService, "resolve_url", signed_url)
+    token = await register_teacher(client, "thumbnail_owner@test.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/courses/", json={"title": "Thumbnail Course"}, headers=headers
+    )
+    course_id = created.json()["id"]
+
+    async def upload_png():
+        presign = await client.post(
+            "/api/v1/uploads/presign",
+            json={
+                "resource_type": "course",
+                "resource_id": course_id,
+                "asset_type": "thumbnail",
+                "mime_type": "image/png",
+                "size_bytes": 8,
+            },
+            headers=headers,
+        )
+        assert presign.status_code == 200
+        return presign.json()
+
+    first = await upload_png()
+    completed = await client.post(
+        "/api/v1/uploads/complete",
+        json={"upload_token": first["upload_token"]},
+        headers=headers,
+    )
+    assert completed.status_code == 200
+    detail = await client.get(f"/api/v1/courses/{course_id}", headers=headers)
+    first_key = detail.json()["thumbnail"].split("/get/", 1)[1].split("?", 1)[0]
+    assert first_key.startswith(f"courses/{course_id}/thumbnail/")
+
+    second = await upload_png()
+    replaced = await client.post(
+        "/api/v1/uploads/complete",
+        json={"upload_token": second["upload_token"]},
+        headers=headers,
+    )
+    assert replaced.status_code == 200
+    assert first_key in fake_storage.deleted
+
+    removed = await client.patch(
+        f"/api/v1/courses/{course_id}", json={"thumbnail": None}, headers=headers
+    )
+    assert removed.status_code == 200
+    assert removed.json()["thumbnail"] is None
+    assert (await client.get(f"/api/v1/courses/{course_id}", headers=headers)).json()["thumbnail"] is None
+
+
+@pytest.mark.asyncio
 async def test_upload_grant_cannot_be_started_for_another_teachers_lesson(client: AsyncClient):
     owner_token = await register_teacher(client, "direct_upload_owner2@test.com")
     course = await client.post(
@@ -180,3 +266,102 @@ async def test_upload_grant_cannot_be_started_for_another_teachers_lesson(client
         headers={"Authorization": f"Bearer {other_token}"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_failed_video_verification_is_not_marked_ready(client: AsyncClient, db, monkeypatch):
+    fake_storage = FakeStorage()
+    monkeypatch.setattr(upload_service, "get_object_storage", lambda: fake_storage)
+    token = await register_teacher(client, "failed_video_owner@test.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    course = await client.post("/api/v1/courses/", json={"title": "Failed Video"}, headers=headers)
+    lesson_response = await client.post(
+        f"/api/v1/courses/{course.json()['id']}/lessons",
+        json={"title": "Bad Video"},
+        headers=headers,
+    )
+    lesson = await db.get(Lesson, uuid.UUID(lesson_response.json()["id"]))
+    grant_response = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": str(lesson.id),
+            "asset_type": "video",
+            "mime_type": "video/mp4",
+            "size_bytes": 123,
+        },
+        headers=headers,
+    )
+    key = next(iter(fake_storage.objects))
+    fake_storage.objects[key]["prefix"] = b"this is not an MP4"
+    completed = await client.post(
+        "/api/v1/uploads/complete",
+        json={"upload_token": grant_response.json()["upload_token"]},
+        headers=headers,
+    )
+    assert completed.status_code == 422
+    assert lesson.video_status == "failed"
+    assert lesson.video_url is None
+
+
+@pytest.mark.asyncio
+async def test_failed_put_can_be_distinguished_from_user_cancellation(client: AsyncClient, db, monkeypatch):
+    fake_storage = FakeStorage()
+    monkeypatch.setattr(upload_service, "get_object_storage", lambda: fake_storage)
+    token = await register_teacher(client, "cancel_video_owner@test.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    course = await client.post("/api/v1/courses/", json={"title": "Cancel Video"}, headers=headers)
+    lesson_response = await client.post(
+        f"/api/v1/courses/{course.json()['id']}/lessons",
+        json={"title": "Cancelled Video"},
+        headers=headers,
+    )
+    lesson = await db.get(Lesson, uuid.UUID(lesson_response.json()["id"]))
+    grant_response = await client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "resource_type": "lesson",
+            "resource_id": str(lesson.id),
+            "asset_type": "video",
+            "mime_type": "video/mp4",
+            "size_bytes": 123,
+        },
+        headers=headers,
+    )
+    response = await client.post(
+        "/api/v1/uploads/cancel",
+        json={"upload_token": grant_response.json()["upload_token"], "failed": True},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert lesson.video_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_teacher_can_delete_video_through_lesson_patch(client: AsyncClient, db, monkeypatch):
+    fake_storage = FakeStorage()
+    from app.api.v1 import lessons as lessons_api
+
+    monkeypatch.setattr(lessons_api, "get_object_storage", lambda: fake_storage)
+    token = await register_teacher(client, "delete_video_owner@test.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    course = await client.post("/api/v1/courses/", json={"title": "Delete Video"}, headers=headers)
+    lesson_response = await client.post(
+        f"/api/v1/courses/{course.json()['id']}/lessons",
+        json={"title": "Video To Delete"},
+        headers=headers,
+    )
+    lesson = await db.get(Lesson, uuid.UUID(lesson_response.json()["id"]))
+    lesson.video_url = "r2://lessons/lesson/video/old.mp4"
+    lesson.video_status = "ready"
+    lesson.video_size_bytes = 123
+    await db.commit()
+
+    removed = await client.patch(
+        f"/api/v1/lessons/{lesson.id}", json={"video_url": None}, headers=headers
+    )
+    assert removed.status_code == 200
+    assert removed.json()["video_url"] is None
+    assert removed.json()["video_status"] == "pending"
+    assert removed.json()["video_size_bytes"] is None
+    assert fake_storage.deleted == ["lessons/lesson/video/old.mp4"]

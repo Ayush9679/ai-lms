@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.core.logging import get_logger
 from app.dependencies.auth import get_current_user, require_student, require_teacher
 from app.models.user import User
 from app.schemas.common import MessageResponse
@@ -22,8 +23,10 @@ from app.schemas.lesson import (
 )
 from app.services.file_service import FileService
 from app.services.lesson_service import LessonService
+from app.services.storage_service import get_object_storage, is_r2_key
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 async def _lesson_response(lesson) -> LessonResponse:
@@ -109,7 +112,20 @@ async def update_lesson(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> LessonResponse:
     svc = LessonService(db)
+    previous_video = None
+    if "video_url" in request.model_fields_set and request.video_url is None:
+        editable = await svc.get_editable_lesson(lesson_id, current_user.id, current_user.role)
+        previous_video = editable.video_url
     lesson = await svc.update_lesson(lesson_id, current_user.id, current_user.role, request)
+    if previous_video and lesson.video_url is None:
+        await db.commit()
+        if is_r2_key(previous_video):
+            try:
+                await get_object_storage().delete(previous_video.removeprefix("r2://"))
+            except Exception:
+                logger.warning("Deleted lesson video object cleanup failed", extra={"operation": "delete_video"})
+        elif previous_video.startswith("/") and not previous_video.startswith("/static/"):
+            FileService().delete_file(previous_video)
     return await _lesson_response(lesson)
 
 

@@ -25,5 +25,11 @@ class CompleteUploadRequest(BaseSchema):
     upload_token: str = Field(min_length=20)
 
 
+class CancelUploadRequest(CompleteUploadRequest):
+    """Cancel a user-aborted upload or record a failed storage PUT."""
+
+    failed: bool = False
+
+
 class UploadStatusResponse(BaseSchema):
     status: Literal["ready", "cancelled"]

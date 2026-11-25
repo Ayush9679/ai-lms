@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from decimal import Decimal
 
 import pytest
 
@@ -19,7 +20,7 @@ def test_render_r2_environment_names_are_canonical(monkeypatch):
         "STORAGE_BUCKET": "ai-lms-media",
         "MAX_VIDEO_SIZE_MB": "2048",
         "MAX_IMAGE_SIZE_MB": "10",
-        "TEACHER_REVENUE_SHARE": "0.70",
+        "TEACHER_REVENUE_SHARE": "0.90",
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -32,7 +33,7 @@ def test_render_r2_environment_names_are_canonical(monkeypatch):
     assert settings.STORAGE_BUCKET != "ai-lms-media-wrong"
     assert settings.MAX_VIDEO_SIZE_BYTES == 2048 * 1024 * 1024
     assert settings.MAX_IMAGE_SIZE_BYTES == 10 * 1024 * 1024
-    assert settings.TEACHER_REVENUE_SHARE == 0.70
+    assert settings.TEACHER_REVENUE_SHARE == Decimal("0.90")
 
 
 def test_storage_endpoint_url_wins_over_account_id(monkeypatch):
@@ -84,6 +85,44 @@ def test_storage_account_id_is_endpoint_fallback(monkeypatch):
     storage_service.ObjectStorage()
 
     assert captured["endpoint_url"] == "https://account-id.r2.cloudflarestorage.com"
+
+
+@pytest.mark.asyncio
+async def test_presigned_put_contract_binds_content_length_type_and_create_only(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def generate_presigned_url(self, operation, Params, ExpiresIn):
+            captured.update(operation=operation, params=Params, expires=ExpiresIn)
+            return "https://private-r2.test/signed"
+
+    monkeypatch.setattr(
+        storage_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            STORAGE_BUCKET="ai-lms-media",
+            STORAGE_PRESIGNED_URL_TTL=900,
+            STORAGE_ENDPOINT_URL="https://account.r2.cloudflarestorage.com",
+            STORAGE_ACCOUNT_ID=None,
+            STORAGE_ACCESS_KEY_ID="key",
+            STORAGE_SECRET_ACCESS_KEY="secret",
+            STORAGE_REGION="auto",
+        ),
+    )
+    monkeypatch.setattr(storage_service.boto3, "client", lambda *args, **kwargs: FakeClient())
+
+    result = await storage_service.ObjectStorage().presign_put(
+        "courses/owned/thumbnail/image.png", "image/png", 4096
+    )
+    assert result == "https://private-r2.test/signed"
+    assert captured["operation"] == "put_object"
+    assert captured["params"] == {
+        "Bucket": "ai-lms-media",
+        "Key": "courses/owned/thumbnail/image.png",
+        "ContentType": "image/png",
+        "ContentLength": 4096,
+        "IfNoneMatch": "*",
+    }
 
 
 def test_single_put_accepts_configured_two_gib_video_limit():

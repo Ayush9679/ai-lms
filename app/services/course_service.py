@@ -3,11 +3,13 @@ AI-LMS Course Service — course CRUD, publishing, and thumbnail management.
 """
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from slugify import slugify
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.course import Course, CourseStatus
@@ -63,6 +65,8 @@ class CourseService:
             category=request.category,
             level=request.level,
             tags=request.tags,
+            price=request.price,
+            currency=request.currency,
             instructor_id=instructor_id,
             status=CourseStatus.draft,
         )
@@ -101,11 +105,27 @@ class CourseService:
     ) -> Course:
         course = await self.get_manageable_course(course_id, requester_id, requester_role)
 
+        clear_thumbnail = "thumbnail" in request.model_fields_set
         update_data = request.model_dump(exclude_unset=True, exclude_none=True)
+        update_data.pop("thumbnail", None)
+
+        if clear_thumbnail:
+            course.thumbnail = None
+            course.thumbnail_upload_id = None
+
+        if (
+            course.status == CourseStatus.published
+            and course.price == 0
+            and update_data.get("price", 0) > 0
+        ):
+            raise ValidationError("Move this course to draft before setting a paid price.")
 
         if update_data.get("status") == CourseStatus.published:
             requirements = await self.get_publish_requirements(
-                course, title=update_data.get("title", course.title)
+                course,
+                title=update_data.get("title", course.title),
+                price=update_data.get("price", course.price),
+                currency=update_data.get("currency", course.currency),
             )
             if requirements:
                 raise ValidationError("Cannot publish course: " + " ".join(requirements))
@@ -118,14 +138,30 @@ class CourseService:
 
         return await self.repo.update(course, **update_data)
 
-    async def get_publish_requirements(self, course: Course, title: str | None = None) -> list[str]:
+    async def get_publish_requirements(
+        self,
+        course: Course,
+        title: str | None = None,
+        price: Decimal | None = None,
+        currency: str | None = None,
+    ) -> list[str]:
         """Return actionable unmet publishing requirements for a course."""
         requirements = []
         effective_title = course.title if title is None else title
+        effective_price = course.price if price is None else price
+        effective_currency = course.currency if currency is None else currency
         if not effective_title or not effective_title.strip():
             requirements.append("Add a nonempty course title.")
         if not course.thumbnail or not course.thumbnail.strip():
             requirements.append("Upload a course thumbnail.")
+        if effective_price < 0:
+            requirements.append("Set the course price to zero or a positive amount.")
+        if effective_currency != "INR":
+            requirements.append("Choose a supported currency (INR).")
+        if effective_price > 0 and not get_settings().RAZORPAY_ENABLED:
+            requirements.append(
+                "Paid-course publishing is disabled until verified checkout is available."
+            )
         if await self.lesson_repo.count_ready_video_by_course(course.id) < 1:
             requirements.append("Upload and verify video for at least one lesson.")
         return requirements

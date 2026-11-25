@@ -54,6 +54,7 @@ async def search_courses(
             status=c.status,
             thumbnail=c.thumbnail,
             price=float(c.price),
+            currency=c.currency,
             instructor_name=c.instructor.full_name if c.instructor else "Unknown",
             total_lessons=0,
             total_students=0,

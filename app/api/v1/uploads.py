@@ -10,6 +10,7 @@ from app.dependencies.auth import get_current_user, require_teacher
 from app.models.user import User
 from app.schemas.upload import (
     CompleteUploadRequest,
+    CancelUploadRequest,
     PresignUploadRequest,
     PresignUploadResponse,
     UploadStatusResponse,
@@ -47,10 +48,12 @@ async def complete_upload(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
+    service = UploadService(db)
+    result = await service.complete(request.upload_token, current_user.id, current_user.role)
+    await db.commit()
+    await service.cleanup_retired_objects()
     return {
-        "status": await UploadService(db).complete(
-            request.upload_token, current_user.id, current_user.role
-        )
+        "status": result
     }
 
 
@@ -58,12 +61,12 @@ async def complete_upload(
     "/cancel", response_model=UploadStatusResponse, dependencies=[Depends(require_teacher)]
 )
 async def cancel_upload(
-    request: CompleteUploadRequest,
+    request: CancelUploadRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     return {
         "status": await UploadService(db).cancel(
-            request.upload_token, current_user.id, current_user.role
+            request.upload_token, current_user.id, current_user.role, failed=request.failed
         )
     }

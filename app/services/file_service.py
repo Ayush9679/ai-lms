@@ -10,10 +10,11 @@ import aiofiles
 from fastapi import UploadFile
 
 from app.core.config import get_settings
-from app.core.exceptions import FileTooLargeError, InvalidFileTypeError
+from app.core.exceptions import FileTooLargeError, InvalidFileTypeError, ValidationError
 from app.core.logging import get_logger
 from app.models.course import FileType
 from app.services.storage_service import get_object_storage, is_r2_key
+from app.utils.media_validation import content_matches_mime
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -77,6 +78,8 @@ class FileService:
         allowed = allowed_types or settings.ALLOWED_MIME_TYPES
         if mime_type not in allowed:
             raise InvalidFileTypeError(mime_type)
+        if not content_matches_mime(mime_type, content[:32]):
+            raise ValidationError("File content does not match its declared media type.")
 
         file_type = MIME_TO_FILE_TYPE.get(mime_type, FileType.other)
         upload_limit = settings.MAX_UPLOAD_SIZE_BYTES

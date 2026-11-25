@@ -12,6 +12,7 @@ from app.api.v1 import (
     dashboard,
     enrollments,
     lessons,
+    payments,
     quizzes,
     search,
     users,
@@ -19,6 +20,8 @@ from app.api.v1 import (
 )
 
 api_router = APIRouter()
+
+api_router.include_router(payments.router, prefix="/payments", tags=["Payments"])
 
 # Auth
 api_router.include_router(auth.router, prefix="/auth", tags=["🔐 Authentication"])
